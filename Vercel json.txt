@@ -1,0 +1,14 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "outputDirectory": ".next",
+  "env": {
+    "TELEGRAM_BOT_TOKEN": "@telegram-bot-token",
+    "TELEGRAM_CHAT_ID": "@telegram-chat-id",
+    "OANDA_API_KEY": "@oanda-api-key",
+    "OANDA_ACCOUNT_ID": "@oanda-account-id",
+    "ALPHA_VANTAGE_KEY": "@alpha-vantage-key"
+  }
+}

@@ -1,0 +1,46 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { TelegramAlertBot } from '@/app/lib/telegram-alerts';
+
+const telegramBot = new TelegramAlertBot();
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { type, data, secret } = body;
+    
+    // Simple authentication
+    if (secret !== process.env.WEBHOOK_SECRET) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    switch (type) {
+      case 'trade_signal':
+        await telegramBot.sendTradeAlert(data);
+        break;
+        
+      case 'alert':
+        await telegramBot.sendAlert(data.title, data.message, data.severity);
+        break;
+        
+      case 'daily_report':
+        await telegramBot.sendDailyReport(data);
+        break;
+        
+      default:
+        return NextResponse.json({ error: 'Unknown webhook type' }, { status: 400 });
+    }
+    
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+export async function GET() {
+  return NextResponse.json({ 
+    status: 'online',
+    service: 'ForexPulse Webhook',
+    endpoints: ['POST /api/webhook - Send alerts']
+  });
+}

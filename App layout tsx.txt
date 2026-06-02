@@ -1,0 +1,25 @@
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+
+const inter = Inter({ subsets: ['latin'] })
+
+export const metadata: Metadata = {
+  title: 'ForexPulse Ultimate - AI Trading Bot',
+  description: 'Professional forex trading bot with real-time WebSocket, broker integration, backtesting, and Telegram alerts',
+  authors: [{ name: 'ForexPulse' }],
+  keywords: 'forex trading bot, AI trading, automated trading, forex signals',
+  viewport: 'width=device-width, initial-scale=1',
+}
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html lang="en">
+      <body className={inter.className}>{children}</body>
+    </html>
+  )
+}
