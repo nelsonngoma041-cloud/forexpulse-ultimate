@@ -20,7 +20,12 @@ import { BacktestingEngine, BacktestConfig, BacktestResult } from './lib/backtes
 import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts';
 
 // Initialize services
+// Force set credentials (temporary fix)
 const telegramBot = new TelegramAlertBot();
+// @ts-ignore - Bypass readonly for testing
+telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ';
+// @ts-ignore - Bypass readonly for testing
+telegramBot.chatId = '7724961440';
 const backtestEngine = new BacktestingEngine();
 const priceWS = new LivePriceWebSocket(); // LIVE // Switch to LivePriceWebSocket for production
 const oandaBroker = new OandaBrokerAPI();
