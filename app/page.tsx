@@ -20,16 +20,36 @@ import { BacktestingEngine, BacktestConfig, BacktestResult } from './lib/backtes
 import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts';
 
 // Initialize services
-// Force set credentials (temporary fix)
 const telegramBot = new TelegramAlertBot();
-// @ts-ignore - Bypass readonly for testing
-telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ';
-// @ts-ignore - Bypass readonly for testing
-telegramBot.chatId = '7724961440';
 const backtestEngine = new BacktestingEngine();
-const priceWS = new LivePriceWebSocket(); // LIVE // Switch to LivePriceWebSocket for production
+const priceWS = new MockPriceWebSocket();
 const oandaBroker = new OandaBrokerAPI();
 const mt5Broker = new MT5BrokerAPI();
+
+// ========== ADD THIS SECTION ==========
+// Add these state variables
+const [settingsToken, setSettingsToken] = useState('');
+const [settingsChatId, setSettingsChatId] = useState('');
+
+// Load saved settings on page load
+useEffect(() => {
+  const savedToken = localStorage.getItem('telegram_token');
+  const savedChatId = localStorage.getItem('telegram_chat_id');
+  if (savedToken) setSettingsToken(savedToken);
+  if (savedChatId) setSettingsChatId(savedChatId);
+}, []);
+
+// Save settings function
+const saveTelegramSettings = () => {
+  localStorage.setItem('telegram_token', settingsToken);
+  localStorage.setItem('telegram_chat_id', settingsChatId);
+  // @ts-ignore
+  telegramBot.botToken = settingsToken;
+  // @ts-ignore
+  telegramBot.chatId = settingsChatId;
+  toast.success('Telegram settings saved!');
+};
+// ========== END OF ADDED SECTION ==========
 
 // Types
 interface Position {
