@@ -19,37 +19,18 @@ import { OandaBrokerAPI, MT5BrokerAPI } from './lib/broker-api';
 import { BacktestingEngine, BacktestConfig, BacktestResult } from './lib/backtesting';
 import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts';
 
-// Initialize services
+// ========== INITIALIZE SERVICES WITH HARDCODED TELEGRAM CREDENTIALS ==========
 const telegramBot = new TelegramAlertBot();
+// @ts-ignore - Bypass readonly for testing
+telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ'; // !!! IMPORTANT: REPLACE WITH YOUR REAL BOT TOKEN !!!
+// @ts-ignore - Bypass readonly for testing
+telegramBot.chatId = '7724961440'; // Your confirmed Chat ID
+
 const backtestEngine = new BacktestingEngine();
-const priceWS = new MockPriceWebSocket();
+const priceWS = new MockPriceWebSocket(); // Switch to LivePriceWebSocket for production
 const oandaBroker = new OandaBrokerAPI();
 const mt5Broker = new MT5BrokerAPI();
-
-// ========== ADD THIS SECTION ==========
-// Add these state variables
-const [settingsToken, setSettingsToken] = useState('');
-const [settingsChatId, setSettingsChatId] = useState('');
-
-// Load saved settings on page load
-useEffect(() => {
-  const savedToken = localStorage.getItem('telegram_token');
-  const savedChatId = localStorage.getItem('telegram_chat_id');
-  if (savedToken) setSettingsToken(savedToken);
-  if (savedChatId) setSettingsChatId(savedChatId);
-}, []);
-
-// Save settings function
-const saveTelegramSettings = () => {
-  localStorage.setItem('telegram_token', settingsToken);
-  localStorage.setItem('telegram_chat_id', settingsChatId);
-  // @ts-ignore
-  telegramBot.botToken = settingsToken;
-  // @ts-ignore
-  telegramBot.chatId = settingsChatId;
-  toast.success('Telegram settings saved!');
-};
-// ========== END OF ADDED SECTION ==========
+// =============================================================================
 
 // Types
 interface Position {
@@ -487,7 +468,7 @@ export default function ForexPulseUltimate() {
                         <th className="px-4 py-2 text-left">P&L %</th>
                         <th className="px-4 py-2 text-left">SL/TP</th>
                         <th className="px-4 py-2 text-left">Status</th>
-                      </tr>
+                      <tr>
                     </thead>
                     <tbody>
                       {positions.map(position => (
@@ -504,13 +485,13 @@ export default function ForexPulseUltimate() {
                           <td className="px-4 py-3 font-mono text-blue-400">{position.currentPrice.toFixed(5)}</td>
                           <td className={`px-4 py-3 font-medium ${position.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             ${position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(0)}
-                          </td>
+                           </td>
                           <td className={`px-4 py-3 ${position.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {position.pnlPercent >= 0 ? '+' : ''}{position.pnlPercent.toFixed(2)}%
-                          </td>
+                           </td>
                           <td className="px-4 py-3 text-xs text-gray-500">
                             {position.stopLoss.toFixed(4)} / {position.takeProfit.toFixed(4)}
-                          </td>
+                           </td>
                           <td className="px-4 py-3">
                             {position.frozen ? (
                               <span className="flex items-center gap-1 text-yellow-400 text-xs">
@@ -519,7 +500,7 @@ export default function ForexPulseUltimate() {
                             ) : (
                               <span className="text-green-400 text-xs">Active</span>
                             )}
-                          </td>
+                           </td>
                         </tr>
                       ))}
                     </tbody>
