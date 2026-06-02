@@ -1,169 +1,32 @@
-export interface TradeAlert {
-  symbol: string;
-  action: 'BUY' | 'SELL';
-  price: number;
-  confidence: number;
-  signalType: string;
-  volume?: number;
-  stopLoss?: number;
-  takeProfit?: number;
+export class BacktestingEngine {
+  // ... all the backtesting methods
 }
 
-export interface DailyReport {
-  date: Date;
-  dailyPnL: number;
+export interface BacktestConfig {
+  startDate: Date;
+  endDate: Date;
+  initialCapital: number;
+  symbol: string;
+  strategy: 'moving_average_crossover' | 'rsi_mean_reversion' | 'bollinger_bands' | 'news_sentiment';
+  parameters: Record<string, any>;
+  riskPerTrade: number;
+  maxConcurrentTrades: number;
+}
+
+export interface BacktestResult {
+  totalReturn: number;
+  totalReturnPercent: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  maxDrawdownPercent: number;
   winRate: number;
-  tradesCount: number;
-  bestTrade: number;
-  worstTrade: number;
   totalTrades: number;
   profitableTrades: number;
-}
-
-export class TelegramAlertBot {
-  private botToken: string;
-  private chatId: string;
-  private baseUrl: string;
-
-  constructor() {
-    this.botToken = process.env.TELEGRAM_BOT_TOKEN || '';
-    this.chatId = process.env.TELEGRAM_CHAT_ID || '';
-    this.baseUrl = `https://api.telegram.org/bot${this.botToken}`;
-  }
-
-  isConfigured(): boolean {
-    return !!this.botToken && !!this.chatId;
-  }
-
-  private async callTelegramAPI(method: string, payload: any): Promise<any> {
-    try {
-      const response = await fetch(`${this.baseUrl}/${method}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      return await response.json();
-    } catch (error) {
-      console.error(`Telegram API error (${method}):`, error);
-      return null;
-    }
-  }
-
-  async sendMessage(message: string, parseMode: 'HTML' | 'Markdown' = 'HTML'): Promise<boolean> {
-    if (!this.isConfigured()) {
-      console.log('Telegram not configured - message would be:', message);
-      return false;
-    }
-    
-    const result = await this.callTelegramAPI('sendMessage', {
-      chat_id: this.chatId,
-      text: message,
-      parse_mode: parseMode,
-      disable_web_page_preview: true
-    });
-    
-    return result?.ok === true;
-  }
-
-  async sendTradeAlert(trade: TradeAlert): Promise<boolean> {
-    const emoji = trade.action === 'BUY' ? '🟢' : '🔴';
-    const directionEmoji = trade.action === 'BUY' ? '📈' : '📉';
-    
-    const message = `
-${emoji} ${directionEmoji} <b>${trade.action} SIGNAL</b> ${directionEmoji} ${emoji}
-
-<b>💰 Symbol:</b> ${trade.symbol}
-<b>⚡ Action:</b> ${trade.action}
-<b>💵 Entry Price:</b> ${trade.price}
-<b>🎯 Confidence:</b> ${(trade.confidence * 100).toFixed(0)}%
-<b>📊 Signal Type:</b> ${trade.signalType}
-${trade.volume ? `<b>📦 Volume:</b> ${trade.volume}` : ''}
-${trade.stopLoss ? `<b>🛑 Stop Loss:</b> ${trade.stopLoss}` : ''}
-${trade.takeProfit ? `<b>🎯 Take Profit:</b> ${trade.takeProfit}` : ''}
-
-<i>🤖 Automated trading bot executing order...</i>
-    `;
-    
-    return this.sendMessage(message);
-  }
-
-  async sendDailyReport(report: DailyReport): Promise<boolean> {
-    const emoji = report.dailyPnL >= 0 ? '✅' : '❌';
-    const trendEmoji = report.dailyPnL >= 0 ? '📈' : '📉';
-    
-    const message = `
-📊 <b>DAILY TRADING REPORT</b> 📊
-<i>${report.date.toLocaleDateString()}</i>
-
-${trendEmoji} <b>Daily P&L:</b> $${report.dailyPnL.toFixed(2)}
-${emoji} <b>Win Rate:</b> ${report.winRate.toFixed(1)}%
-<b>🎲 Trades Executed:</b> ${report.tradesCount}
-<b>🏆 Best Trade:</b> +$${report.bestTrade.toFixed(2)}
-<b>📉 Worst Trade:</b> -$${Math.abs(report.worstTrade).toFixed(2)}
-<b>📊 Total Trades (Month):</b> ${report.totalTrades}
-<b>✅ Profitable Trades:</b> ${report.profitableTrades}
-
-🤖 Bot is active and monitoring markets 24/5.
-    `;
-    
-    return this.sendMessage(message);
-  }
-
-  async sendPositionUpdate(position: {
-    symbol: string;
-    action: string;
-    entryPrice: number;
-    currentPrice: number;
-    pnl: number;
-    pnlPercent: number;
-  }): Promise<boolean> {
-    const emoji = position.pnl >= 0 ? '🟢' : '🔴';
-    const pnlEmoji = position.pnl >= 0 ? '📈' : '📉';
-    
-    const message = `
-${emoji} <b>POSITION UPDATE</b> ${emoji}
-
-<b>💱 Symbol:</b> ${position.symbol}
-<b>📌 Direction:</b> ${position.action}
-<b>💰 Entry:</b> ${position.entryPrice}
-<b>💵 Current:</b> ${position.currentPrice}
-<b>${pnlEmoji} P&L:</b> $${position.pnl.toFixed(2)} (${position.pnlPercent.toFixed(2)}%)
-    `;
-    
-    return this.sendMessage(message);
-  }
-
-  async sendAlert(title: string, message: string, severity: 'info' | 'warning' | 'error' = 'info'): Promise<boolean> {
-    const icons = {
-      info: 'ℹ️',
-      warning: '⚠️',
-      error: '🚨'
-    };
-    
-    const fullMessage = `${icons[severity]} <b>${title}</b>\n\n${message}`;
-    return this.sendMessage(fullMessage);
-  }
-
-  async sendMarketCommentary(commentary: string): Promise<boolean> {
-    const message = `
-📰 <b>Market Commentary</b>
-<i>${new Date().toLocaleTimeString()}</i>
-
-${commentary}
-    `;
-    return this.sendMessage(message);
-  }
-
-  async testConnection(): Promise<boolean> {
-    const message = `
-🤖 <b>ForexPulse Trading Bot</b> 🤖
-
-✅ Bot is online and connected
-✅ Telegram alerts active
-✅ Monitoring markets
-
-<i>${new Date().toLocaleString()}</i>
-    `;
-    return this.sendMessage(message);
-  }
+  losingTrades: number;
+  avgWin: number;
+  avgLoss: number;
+  profitFactor: number;
+  expectancy: number;
+  equityCurve: Array<{ date: Date; equity: number }>;
+  trades: Array<any>;
 }
