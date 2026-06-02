@@ -1,11 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    serverActions: true,
-  },
-  images: {
-    domains: [],
-  },
+  // Remove experimental.serverActions - it's now default
 }
 
 module.exports = nextConfig
