@@ -19,13 +19,18 @@ import { OandaBrokerAPI, MT5BrokerAPI } from './lib/broker-api';
 import { BacktestingEngine, BacktestConfig, BacktestResult } from './lib/backtesting';
 import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts';
 
-// ========== INITIALIZE SERVICES (TOP LEVEL - THIS IS OK) ==========
+// ========== INITIALIZE SERVICES WITH HARDCODED TELEGRAM CREDENTIALS ==========
 const telegramBot = new TelegramAlertBot();
+// @ts-ignore - Hardcoded working credentials
+telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ';
+// @ts-ignore - Hardcoded working credentials
+telegramBot.chatId = '7724961440';
+
 const backtestEngine = new BacktestingEngine();
 const priceWS = new MockPriceWebSocket(); // Switch to LivePriceWebSocket for production
 const oandaBroker = new OandaBrokerAPI();
 const mt5Broker = new MT5BrokerAPI();
-// =================================================================
+// =============================================================================
 
 // Types
 interface Position {
@@ -67,7 +72,7 @@ interface AccountInfo {
 }
 
 export default function ForexPulseUltimate() {
-  // ========== UI STATE ==========
+  // UI State
   const [activeTab, setActiveTab] = useState<'dashboard' | 'trading' | 'backtest' | 'settings'>('dashboard');
   const [botRunning, setBotRunning] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
@@ -75,12 +80,7 @@ export default function ForexPulseUltimate() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(true);
   
-  // ========== TELEGRAM SETTINGS STATE (ADDED HERE - INSIDE COMPONENT) ==========
-  const [settingsToken, setSettingsToken] = useState('');
-  const [settingsChatId, setSettingsChatId] = useState('');
-  // ==============================================================================
-  
-  // ========== DATA STATE ==========
+  // Data State
   const [positions, setPositions] = useState<Position[]>([]);
   const [newsFeed, setNewsFeed] = useState<NewsItem[]>([]);
   const [account, setAccount] = useState<AccountInfo>({
@@ -101,32 +101,14 @@ export default function ForexPulseUltimate() {
   });
   const [isBacktesting, setIsBacktesting] = useState(false);
   
-  // ========== CHART DATA ==========
+  // Chart data
   const [equityData, setEquityData] = useState<{ time: string; equity: number }[]>([]);
   const [pnlData, setPnlData] = useState<{ date: string; pnl: number }[]>([]);
   
-  // ========== REFS ==========
+  // Refs
   const unsubscribeRefs = useRef<Array<() => void>>([]);
 
-  // ========== EFFECTS ==========
-  
-  // Load saved Telegram settings from localStorage on page load
-  useEffect(() => {
-    const savedToken = localStorage.getItem('telegram_token');
-    const savedChatId = localStorage.getItem('telegram_chat_id');
-    if (savedToken) {
-      setSettingsToken(savedToken);
-      // @ts-ignore
-      telegramBot.botToken = savedToken;
-    }
-    if (savedChatId) {
-      setSettingsChatId(savedChatId);
-      // @ts-ignore
-      telegramBot.chatId = savedChatId;
-    }
-  }, []);
-
-  // Initialize demo positions and mock data
+  // Initialize demo positions
   useEffect(() => {
     const demoPositions: Position[] = [
       { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, entryTime: new Date(Date.now() - 2 * 60 * 60 * 1000), frozen: false },
@@ -222,19 +204,6 @@ export default function ForexPulseUltimate() {
     return () => clearInterval(interval);
   }, [botRunning, showNotifications]);
 
-  // ========== FUNCTIONS ==========
-  
-  // Save Telegram Settings
-  const saveTelegramSettings = () => {
-    localStorage.setItem('telegram_token', settingsToken);
-    localStorage.setItem('telegram_chat_id', settingsChatId);
-    // @ts-ignore
-    telegramBot.botToken = settingsToken;
-    // @ts-ignore
-    telegramBot.chatId = settingsChatId;
-    toast.success('Telegram settings saved!');
-  };
-
   const toggleBot = async () => {
     if (!botRunning) {
       setBotRunning(true);
@@ -259,7 +228,7 @@ export default function ForexPulseUltimate() {
       takeProfit: 1.0950
     };
     await telegramBot.sendTradeAlert(testTrade);
-    toast.success('Test alert sent to Telegram');
+    toast.success('Test alert sent to Telegram! Check your phone.');
   };
 
   const runBacktest = async () => {
@@ -496,7 +465,7 @@ export default function ForexPulseUltimate() {
                         <th className="px-4 py-2 text-left">P&L %</th>
                         <th className="px-4 py-2 text-left">SL/TP</th>
                         <th className="px-4 py-2 text-left">Status</th>
-                       </tr>
+                      </tr>
                     </thead>
                     <tbody>
                       {positions.map(position => (
@@ -740,8 +709,7 @@ export default function ForexPulseUltimate() {
                     <input 
                       type="password" 
                       placeholder="Enter bot token" 
-                      value={settingsToken}
-                      onChange={(e) => setSettingsToken(e.target.value)}
+                      defaultValue="8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ"
                       className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" 
                     />
                     <p className="text-xs text-gray-500 mt-1">Get from @BotFather on Telegram</p>
@@ -751,8 +719,7 @@ export default function ForexPulseUltimate() {
                     <input 
                       type="text" 
                       placeholder="Enter chat ID" 
-                      value={settingsChatId}
-                      onChange={(e) => setSettingsChatId(e.target.value)}
+                      defaultValue="7724961440"
                       className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" 
                     />
                   </div>
@@ -764,10 +731,7 @@ export default function ForexPulseUltimate() {
                     <label className="text-sm text-gray-400">Alpha Vantage API Key</label>
                     <input type="password" placeholder="Enter API key" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
                   </div>
-                  <button 
-                    onClick={saveTelegramSettings}
-                    className="w-full bg-emerald-500/20 text-emerald-400 px-4 py-2 rounded-lg hover:bg-emerald-500/30 transition"
-                  >
+                  <button className="w-full bg-emerald-500/20 text-emerald-400 px-4 py-2 rounded-lg hover:bg-emerald-500/30 transition">
                     Save All Settings
                   </button>
                 </div>
@@ -778,4 +742,4 @@ export default function ForexPulseUltimate() {
       </main>
     </div>
   );
-        }
+                                  }
