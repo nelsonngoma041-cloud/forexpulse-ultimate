@@ -22,7 +22,7 @@ import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts
 // Initialize services
 const telegramBot = new TelegramAlertBot();
 const backtestEngine = new BacktestingEngine();
-const priceWS = new MockPriceWebSocket(); // Switch to LivePriceWebSocket for production
+const priceWS = new LivePriceWebSocket(); // LIVE // Switch to LivePriceWebSocket for production
 const oandaBroker = new OandaBrokerAPI();
 const mt5Broker = new MT5BrokerAPI();
 
