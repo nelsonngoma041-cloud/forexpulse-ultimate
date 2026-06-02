@@ -21,7 +21,7 @@ import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 // ========== INITIALIZE SERVICES WITH HARDCODED TELEGRAM CREDENTIALS ==========
 const telegramBot = new TelegramAlertBot();
 // @ts-ignore
-telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ';
+telegramBot.botToken = '8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q';
 // @ts-ignore
 telegramBot.chatId = '7724961440';
 
