@@ -19,18 +19,13 @@ import { OandaBrokerAPI, MT5BrokerAPI } from './lib/broker-api';
 import { BacktestingEngine, BacktestConfig, BacktestResult } from './lib/backtesting';
 import { TelegramAlertBot, TradeAlert, DailyReport } from './lib/telegram-alerts';
 
-// ========== INITIALIZE SERVICES WITH HARDCODED TELEGRAM CREDENTIALS ==========
+// ========== INITIALIZE SERVICES (TOP LEVEL - THIS IS OK) ==========
 const telegramBot = new TelegramAlertBot();
-// @ts-ignore - Bypass readonly for testing
-telegramBot.botToken = '8677113455:AAHYDfIYndZ4sVcNtKrqS56b_DqC3V4uurQ'; // !!! IMPORTANT: REPLACE WITH YOUR REAL BOT TOKEN !!!
-// @ts-ignore - Bypass readonly for testing
-telegramBot.chatId = '7724961440'; // Your confirmed Chat ID
-
 const backtestEngine = new BacktestingEngine();
 const priceWS = new MockPriceWebSocket(); // Switch to LivePriceWebSocket for production
 const oandaBroker = new OandaBrokerAPI();
 const mt5Broker = new MT5BrokerAPI();
-// =============================================================================
+// =================================================================
 
 // Types
 interface Position {
@@ -72,7 +67,7 @@ interface AccountInfo {
 }
 
 export default function ForexPulseUltimate() {
-  // UI State
+  // ========== UI STATE ==========
   const [activeTab, setActiveTab] = useState<'dashboard' | 'trading' | 'backtest' | 'settings'>('dashboard');
   const [botRunning, setBotRunning] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
@@ -80,7 +75,12 @@ export default function ForexPulseUltimate() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(true);
   
-  // Data State
+  // ========== TELEGRAM SETTINGS STATE (ADDED HERE - INSIDE COMPONENT) ==========
+  const [settingsToken, setSettingsToken] = useState('');
+  const [settingsChatId, setSettingsChatId] = useState('');
+  // ==============================================================================
+  
+  // ========== DATA STATE ==========
   const [positions, setPositions] = useState<Position[]>([]);
   const [newsFeed, setNewsFeed] = useState<NewsItem[]>([]);
   const [account, setAccount] = useState<AccountInfo>({
@@ -101,14 +101,32 @@ export default function ForexPulseUltimate() {
   });
   const [isBacktesting, setIsBacktesting] = useState(false);
   
-  // Chart data
+  // ========== CHART DATA ==========
   const [equityData, setEquityData] = useState<{ time: string; equity: number }[]>([]);
   const [pnlData, setPnlData] = useState<{ date: string; pnl: number }[]>([]);
   
-  // Refs
+  // ========== REFS ==========
   const unsubscribeRefs = useRef<Array<() => void>>([]);
 
-  // Initialize demo positions
+  // ========== EFFECTS ==========
+  
+  // Load saved Telegram settings from localStorage on page load
+  useEffect(() => {
+    const savedToken = localStorage.getItem('telegram_token');
+    const savedChatId = localStorage.getItem('telegram_chat_id');
+    if (savedToken) {
+      setSettingsToken(savedToken);
+      // @ts-ignore
+      telegramBot.botToken = savedToken;
+    }
+    if (savedChatId) {
+      setSettingsChatId(savedChatId);
+      // @ts-ignore
+      telegramBot.chatId = savedChatId;
+    }
+  }, []);
+
+  // Initialize demo positions and mock data
   useEffect(() => {
     const demoPositions: Position[] = [
       { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, entryTime: new Date(Date.now() - 2 * 60 * 60 * 1000), frozen: false },
@@ -117,7 +135,6 @@ export default function ForexPulseUltimate() {
     ];
     setPositions(demoPositions);
     
-    // Generate mock news
     const mockNews: NewsItem[] = [
       { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(Date.now() - 1000 * 60 * 5), source: 'Reuters' },
       { id: '2', headline: "ECB's Lagarde hints at July hike, cites wage pressures", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(Date.now() - 1000 * 60 * 15), source: 'Bloomberg' },
@@ -127,14 +144,12 @@ export default function ForexPulseUltimate() {
     ];
     setNewsFeed(mockNews);
     
-    // Generate mock equity curve
     const mockEquity = Array.from({ length: 30 }, (_, i) => ({
       time: `${9 + Math.floor(i / 2)}:${(i % 2) * 30}`,
       equity: 10000 + Math.sin(i / 3) * 200 + Math.random() * 100
     }));
     setEquityData(mockEquity);
     
-    // Generate mock PnL data
     const mockPnL = Array.from({ length: 7 }, (_, i) => ({
       date: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i],
       pnl: Math.random() * 500 - 100
@@ -206,6 +221,19 @@ export default function ForexPulseUltimate() {
     
     return () => clearInterval(interval);
   }, [botRunning, showNotifications]);
+
+  // ========== FUNCTIONS ==========
+  
+  // Save Telegram Settings
+  const saveTelegramSettings = () => {
+    localStorage.setItem('telegram_token', settingsToken);
+    localStorage.setItem('telegram_chat_id', settingsChatId);
+    // @ts-ignore
+    telegramBot.botToken = settingsToken;
+    // @ts-ignore
+    telegramBot.chatId = settingsChatId;
+    toast.success('Telegram settings saved!');
+  };
 
   const toggleBot = async () => {
     if (!botRunning) {
@@ -468,7 +496,7 @@ export default function ForexPulseUltimate() {
                         <th className="px-4 py-2 text-left">P&L %</th>
                         <th className="px-4 py-2 text-left">SL/TP</th>
                         <th className="px-4 py-2 text-left">Status</th>
-                      <tr>
+                       </tr>
                     </thead>
                     <tbody>
                       {positions.map(position => (
@@ -485,13 +513,13 @@ export default function ForexPulseUltimate() {
                           <td className="px-4 py-3 font-mono text-blue-400">{position.currentPrice.toFixed(5)}</td>
                           <td className={`px-4 py-3 font-medium ${position.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             ${position.pnl >= 0 ? '+' : ''}{position.pnl.toFixed(0)}
-                           </td>
+                          </td>
                           <td className={`px-4 py-3 ${position.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                             {position.pnlPercent >= 0 ? '+' : ''}{position.pnlPercent.toFixed(2)}%
-                           </td>
+                          </td>
                           <td className="px-4 py-3 text-xs text-gray-500">
                             {position.stopLoss.toFixed(4)} / {position.takeProfit.toFixed(4)}
-                           </td>
+                          </td>
                           <td className="px-4 py-3">
                             {position.frozen ? (
                               <span className="flex items-center gap-1 text-yellow-400 text-xs">
@@ -500,7 +528,7 @@ export default function ForexPulseUltimate() {
                             ) : (
                               <span className="text-green-400 text-xs">Active</span>
                             )}
-                           </td>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -549,7 +577,6 @@ export default function ForexPulseUltimate() {
           {activeTab === 'trading' && (
             <div className="space-y-6">
               <div className="grid grid-cols-3 gap-6">
-                {/* Manual Trading Panel */}
                 <div className="col-span-2 rounded-xl bg-gray-900 border border-gray-800 p-6">
                   <h3 className="font-medium text-lg mb-4">📈 Manual Trading</h3>
                   <div className="grid grid-cols-2 gap-4 mb-4">
@@ -583,7 +610,6 @@ export default function ForexPulseUltimate() {
                   </div>
                 </div>
 
-                {/* Account Info */}
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
                   <h3 className="font-medium mb-4">💰 Account Summary</h3>
                   <div className="space-y-3">
@@ -711,12 +737,24 @@ export default function ForexPulseUltimate() {
                 <div className="space-y-4">
                   <div>
                     <label className="text-sm text-gray-400">Telegram Bot Token</label>
-                    <input type="password" placeholder="Enter bot token" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
+                    <input 
+                      type="password" 
+                      placeholder="Enter bot token" 
+                      value={settingsToken}
+                      onChange={(e) => setSettingsToken(e.target.value)}
+                      className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" 
+                    />
                     <p className="text-xs text-gray-500 mt-1">Get from @BotFather on Telegram</p>
                   </div>
                   <div>
                     <label className="text-sm text-gray-400">Telegram Chat ID</label>
-                    <input type="text" placeholder="Enter chat ID" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
+                    <input 
+                      type="text" 
+                      placeholder="Enter chat ID" 
+                      value={settingsChatId}
+                      onChange={(e) => setSettingsChatId(e.target.value)}
+                      className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" 
+                    />
                   </div>
                   <div>
                     <label className="text-sm text-gray-400">OANDA API Key</label>
@@ -726,7 +764,10 @@ export default function ForexPulseUltimate() {
                     <label className="text-sm text-gray-400">Alpha Vantage API Key</label>
                     <input type="password" placeholder="Enter API key" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
                   </div>
-                  <button className="w-full bg-emerald-500/20 text-emerald-400 px-4 py-2 rounded-lg hover:bg-emerald-500/30 transition">
+                  <button 
+                    onClick={saveTelegramSettings}
+                    className="w-full bg-emerald-500/20 text-emerald-400 px-4 py-2 rounded-lg hover:bg-emerald-500/30 transition"
+                  >
                     Save All Settings
                   </button>
                 </div>
@@ -737,4 +778,4 @@ export default function ForexPulseUltimate() {
       </main>
     </div>
   );
-}
+        }
