@@ -14,6 +14,7 @@ import {
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AutomatedTradingBot, TradingConfig } from './lib/automated-trading';
 import { AlphaVantageAPI } from './lib/broker-api';
+import { MetaApiBroker } from './lib/metaapi-broker';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
 const telegramBot = new TelegramAlertBot();
@@ -35,12 +36,13 @@ const tradingConfig: TradingConfig = {
   maxDailyTrades: 10,
   riskPerTrade: 1.5,
   minConfidence: 0.65,
-  tradingHours: { start: 0, end: 24 } // 24/7 trading
+  tradingHours: { start: 0, end: 24 }
 };
 
-// Initialize trading bot and API
+// Initialize trading bot and APIs
 const tradingBot = new AutomatedTradingBot(tradingConfig, telegramBot);
 const alphaVantage = new AlphaVantageAPI();
+const metaApiBroker = new MetaApiBroker();
 
 // ============ TYPES ============
 interface Position {
@@ -67,7 +69,6 @@ interface NewsItem {
   source: string;
 }
 
-// Helper function to calculate P&L
 const calculatePnL = (position: Position, currentPrice: number): number => {
   if (position.direction === 'LONG') {
     return (currentPrice - position.entryPrice) * 10000 * position.volume;
@@ -82,7 +83,9 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
+  const [useMT5Data, setUseMT5Data] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [mt5Connected, setMt5Connected] = useState(false);
   const [botStatus, setBotStatus] = useState({ activeTrades: 0, dailyPnL: 0, dailyTrades: 0 });
   
   const [positions, setPositions] = useState<Position[]>([
@@ -97,21 +100,33 @@ export default function Home() {
     { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(), source: 'Reuters' },
     { id: '2', headline: "ECB's Lagarde hints at July hike, cites wage pressures", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
     { id: '3', headline: 'BoJ maintains ultra-loose policy, yen weakens', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
-    { id: '4', headline: 'RBA holds but removes hawkish bias, AUD slips', currency: 'AUD', sentiment: 'dovish', confidence: 0.74, timestamp: new Date(), source: 'AFR' },
-    { id: '5', headline: 'Canada jobs data beats expectations, CAD jumps', currency: 'CAD', sentiment: 'hawkish', confidence: 0.81, timestamp: new Date(), source: 'Bloomberg' },
   ]);
   
   const [equityData] = useState([
     { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
     { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
     { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
-    { time: '12:30', equity: 10420 }, { time: '13:00', equity: 10380 },
   ]);
   
   const [pnlData] = useState([
     { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
-    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, { date: 'Sat', pnl: 180 }, { date: 'Sun', pnl: 90 },
+    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
   ]);
+
+  // ============ MT5 CONNECTION ============
+  useEffect(() => {
+    if (botRunning && useMT5Data) {
+      const accountId = process.env.NEXT_PUBLIC_METAAPI_ACCOUNT_ID || 'c20cd5b54db7a38402208da1456127f';
+      metaApiBroker.connect(accountId).then((connected) => {
+        setMt5Connected(connected);
+        if (connected) {
+          toast.success('✅ Connected to MT5 Demo Account');
+        } else {
+          toast.error('❌ MT5 connection failed');
+        }
+      });
+    }
+  }, [botRunning, useMT5Data]);
 
   // Update bot status periodically
   useEffect(() => {
@@ -135,12 +150,21 @@ export default function Home() {
     const fetchPricesAndTrade = async () => {
       for (const symbol of tradingConfig.symbols) {
         try {
-          const price = await alphaVantage.getLivePrice(symbol);
+          let price: number | null = null;
+          
+          if (useMT5Data && mt5Connected) {
+            const prices = await metaApiBroker.getPrices([symbol]);
+            price = prices[symbol] || null;
+          } else if (useLiveData) {
+            price = await alphaVantage.getLivePrice(symbol);
+          } else {
+            // Demo mode - use mock price
+            price = 1.0892 + (Math.random() - 0.5) * 0.005;
+          }
+          
           if (price && isMounted) {
-            // Update trading bot with new price
             tradingBot.updatePrice(symbol, price);
             
-            // Update positions in UI
             setPositions(prev => prev.map(p => 
               p.symbol === symbol ? { 
                 ...p, 
@@ -158,50 +182,15 @@ export default function Home() {
     };
 
     fetchPricesAndTrade();
-    const interval = setInterval(fetchPricesAndTrade, 30000); // Every 30 seconds
+    const interval = setInterval(fetchPricesAndTrade, 30000);
     
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [botRunning]);
+  }, [botRunning, useLiveData, useMT5Data, mt5Connected]);
 
-  // Mock price fallback when live data is off
-  useEffect(() => {
-    if (!botRunning || useLiveData) return;
-    
-    const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
-    const intervals: NodeJS.Timeout[] = [];
-    
-    symbols.forEach(symbol => {
-      const interval = setInterval(() => {
-        const change = (Math.random() - 0.5) * 0.0003;
-        setPositions(prev => prev.map(p => {
-          if (p.symbol === symbol) {
-            const newPrice = Number((p.currentPrice + change).toFixed(5));
-            const newPnl = calculatePnL(p, newPrice);
-            return {
-              ...p,
-              currentPrice: newPrice,
-              pnl: newPnl,
-              pnlPercent: (newPnl / 10000) * 100
-            };
-          }
-          return p;
-        }));
-        
-        // Also update trading bot with mock price
-        const mockPrice = 1.0892 + (Math.random() - 0.5) * 0.005;
-        tradingBot.updatePrice(symbol, mockPrice);
-        setWsConnected(true);
-      }, 2000);
-      intervals.push(interval);
-    });
-    
-    return () => intervals.forEach(interval => clearInterval(interval));
-  }, [botRunning, useLiveData]);
-
-  // News sentiment effect - feed news to trading bot
+  // News sentiment effect
   useEffect(() => {
     if (!botRunning || newsFeed.length === 0) return;
     
@@ -225,10 +214,9 @@ export default function Home() {
     const interval = setInterval(() => {
       const headlines = [
         `Fed ${Math.random() > 0.5 ? 'hints at' : 'signals'} rate change`,
-        `ECB ${Math.random() > 0.5 ? 'hawkish' : 'dovish'} comments surprise markets`,
+        `ECB ${Math.random() > 0.5 ? 'hawkish' : 'dovish'} comments`,
         `BOJ maintains policy as expected`,
-        `Strong ${['US', 'Eurozone', 'UK', 'Japan'][Math.floor(Math.random() * 4)]} economic data released`,
-        `Geopolitical tensions impact ${['USD', 'EUR', 'GBP', 'JPY'][Math.floor(Math.random() * 4)]}`
+        `Strong economic data released`,
       ];
       
       const currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD'];
@@ -256,12 +244,12 @@ export default function Home() {
     if (!botRunning) {
       tradingBot.start();
       setBotRunning(true);
-      await telegramBot.sendAlert('Trading Bot', '🤖 Bot has been activated and is monitoring markets', 'info');
+      await telegramBot.sendAlert('Trading Bot', '🤖 Bot activated - monitoring markets', 'info');
       toast.success('🤖 Trading bot activated');
     } else {
       tradingBot.stop('Manual stop');
       setBotRunning(false);
-      await telegramBot.sendAlert('Trading Bot', '⏸️ Bot has been paused', 'warning');
+      await telegramBot.sendAlert('Trading Bot', '⏸️ Bot paused', 'warning');
       toast('⏸️ Bot paused');
     }
   };
@@ -281,20 +269,14 @@ export default function Home() {
         takeProfit: eurPrice * 1.02
       };
       await telegramBot.sendTradeAlert(testTrade);
-      toast.success('✅ Alert sent to Telegram! Check your phone.', { id: 'test' });
+      toast.success('✅ Alert sent to Telegram!', { id: 'test' });
     } catch (error) {
       toast.error('Failed to send alert', { id: 'test' });
     }
   };
 
   const exportData = () => {
-    const data = { 
-      positions, 
-      newsFeed, 
-      botStatus,
-      exportDate: new Date().toISOString(),
-      activeTrades: tradingBot.getActiveTrades()
-    };
+    const data = { positions, newsFeed, botStatus, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -302,7 +284,7 @@ export default function Home() {
     a.download = `forexpulse_export_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success('Data exported successfully');
+    toast.success('Data exported');
   };
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
@@ -350,18 +332,33 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${wsConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
                 {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {useLiveData ? 'Live Data' : 'Demo Mode'}
+                {useMT5Data ? 'MT5 Live' : (useLiveData ? 'Alpha Vantage' : 'Demo Mode')}
               </div>
+              {mt5Connected && (
+                <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  <span>MT5 ✅</span>
+                </div>
+              )}
               <button 
-                onClick={() => setUseLiveData(!useLiveData)} 
-                className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}
+                onClick={() => {
+                  setUseMT5Data(!useMT5Data);
+                  if (!useMT5Data) setUseLiveData(false);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useMT5Data ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}
               >
-                {useLiveData ? '📡 Live' : '🎮 Demo'}
+                {useMT5Data ? '📈 MT5 Mode' : '🔌 Use MT5'}
+              </button>
+              <button 
+                onClick={() => {
+                  if (!useMT5Data) setUseLiveData(!useLiveData);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useLiveData && !useMT5Data ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useLiveData && !useMT5Data ? '📡 Live' : '🎮 Demo'}
               </button>
             </div>
             
             <div className="flex gap-2">
-              {/* Bot Status Indicators */}
               <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
                 <Target className="w-4 h-4 text-emerald-400" />
                 <span>{botStatus.activeTrades} Active Trades</span>
@@ -369,12 +366,8 @@ export default function Home() {
               <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
                 <DollarSign className="w-4 h-4 text-blue-400" />
                 <span className={botStatus.dailyPnL >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  Daily P&L: ${botStatus.dailyPnL.toFixed(2)}
+                  Daily: ${botStatus.dailyPnL.toFixed(2)}
                 </span>
-              </div>
-              <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
-                <Activity className="w-4 h-4 text-purple-400" />
-                <span>{botStatus.dailyTrades} Trades Today</span>
               </div>
               
               <button onClick={sendTestAlert} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
@@ -421,7 +414,7 @@ export default function Home() {
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Data Source</div>
-                  <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
+                  <div className="text-sm font-bold mt-1 text-blue-400">{useMT5Data ? 'MT5 Demo' : (useLiveData ? 'Alpha Vantage' : 'Demo')}</div>
                 </div>
               </div>
 
@@ -459,7 +452,7 @@ export default function Home() {
               <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
                   <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
-                  <span className="text-xs text-gray-500">Prices update every 30 seconds</span>
+                  <span className="text-xs text-gray-500">Updates every 30 seconds</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -473,7 +466,7 @@ export default function Home() {
                         <th className="px-4 py-2 text-left">P&L %</th>
                         <th className="px-4 py-2 text-left">SL/TP</th>
                         <th className="px-4 py-2 text-left">Status</th>
-                       </tr>
+                      </tr>
                     </thead>
                     <tbody>
                       {positions.map(p => (
@@ -543,12 +536,10 @@ export default function Home() {
                     <span className="text-green-400">✓ Connected</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Chat ID:</span>
-                    <span className="text-green-400 font-mono">7724961440</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Alpha Vantage API:</span>
-                    <span className="text-green-400">✓ Configured</span>
+                    <span className="text-gray-400">MetaApi MT5:</span>
+                    <span className={mt5Connected ? "text-green-400" : "text-yellow-400"}>
+                      {mt5Connected ? "✓ Connected to Demo" : "⚠️ Not Connected"}
+                    </span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Bot:</span>
@@ -560,18 +551,18 @@ export default function Home() {
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Data Source:</span>
-                    <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Live (Alpha Vantage)" : "Demo Mode"}</span>
+                    <span className={useMT5Data ? "text-green-400" : (useLiveData ? "text-blue-400" : "text-yellow-400")}>
+                      {useMT5Data ? "MT5 Demo Account" : (useLiveData ? "Alpha Vantage (Forex)" : "Demo Mode")}
+                    </span>
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
-                  <p className="text-sm text-gray-300">📌 How to use the automated trading bot:</p>
+                  <p className="text-sm text-gray-300">📌 MT5 Trading Instructions:</p>
                   <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
-                    <li>Message your bot on Telegram (click Start)</li>
+                    <li>Click <span className="text-cyan-400">"Use MT5"</span> button to enable MT5 data</li>
                     <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
-                    <li>The bot analyzes RSI, MACD, MA Crossovers, Bollinger Bands, and News Sentiment</li>
-                    <li>Trades are executed when multiple strategies agree (consensus trading)</li>
+                    <li>The bot will execute trades on your MT5 demo account</li>
                     <li>Each trade has automatic Stop Loss and Take Profit</li>
-                    <li>Daily limits: {tradingConfig.maxDailyTrades} trades max, ${tradingConfig.maxDailyLoss} max loss</li>
                     <li>All trades are reported to your Telegram</li>
                   </ol>
                 </div>
@@ -582,4 +573,4 @@ export default function Home() {
       </main>
     </div>
   );
-                }
+      }
