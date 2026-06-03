@@ -1,18 +1,247 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Toaster, toast } from "react-hot-toast";
-import { Bot, MessageCircle, Play, Pause, Activity, Settings, Wifi, ChevronLeft } from "lucide-react";
+import { 
+  Bot, MessageCircle, Play, Pause, Activity, Settings, 
+  TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
+  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download 
+} from "lucide-react";
+import { 
+  AreaChart, Area, BarChart, Bar, 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
+} from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 
-// Initialize Telegram bot with your working token
+// ============ TELEGRAM BOT INITIALIZATION ============
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
+// ============ TYPES ============
+interface Position {
+  id: string;
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entryPrice: number;
+  currentPrice: number;
+  volume: number;
+  pnl: number;
+  pnlPercent: number;
+  stopLoss: number;
+  takeProfit: number;
+  frozen: boolean;
+}
+
+interface NewsItem {
+  id: string;
+  headline: string;
+  currency: string;
+  sentiment: 'hawkish' | 'dovish';
+  confidence: number;
+  timestamp: Date;
+  source: string;
+}
+
+// ============ ALPHA VANTAGE API SERVICE ============
+class AlphaVantageService {
+  private apiKey: string;
+  private cache: Map<string, { price: number; timestamp: number }> = new Map();
+  private cacheDuration = 30000; // 30 seconds cache
+
+  constructor() {
+    this.apiKey = process.env.NEXT_PUBLIC_ALPHA_VANTAGE_KEY || 'MUTVWYGAE0PTMVI1';
+  }
+
+  async getLivePrice(symbol: string): Promise<number | null> {
+    // Check cache first
+    const cached = this.cache.get(symbol);
+    if (cached && Date.now() - cached.timestamp < this.cacheDuration) {
+      return cached.price;
+    }
+
+    try {
+      const fromTo = symbol.replace('/', '');
+      const fromCurrency = fromTo.slice(0, 3);
+      const toCurrency = fromTo.slice(3);
+      const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${fromCurrency}&to_currency=${toCurrency}&apikey=${this.apiKey}`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data['Realtime Currency Exchange Rate']) {
+        const price = parseFloat(data['Realtime Currency Exchange Rate']['5. Exchange Rate']);
+        this.cache.set(symbol, { price, timestamp: Date.now() });
+        return price;
+      }
+      return null;
+    } catch (error) {
+      console.error('Alpha Vantage error:', error);
+      return null;
+    }
+  }
+
+  async getMultiplePrices(symbols: string[]): Promise<Record<string, number>> {
+    const prices: Record<string, number> = {};
+    for (const symbol of symbols) {
+      const price = await this.getLivePrice(symbol);
+      if (price) prices[symbol] = price;
+    }
+    return prices;
+  }
+}
+
+const alphaVantage = new AlphaVantageService();
+
+// ============ MOCK PRICE SERVICE (FALLBACK) ============
+class MockPriceService {
+  private prices: Record<string, number> = {
+    'EUR/USD': 1.0892,
+    'GBP/USD': 1.2715,
+    'USD/JPY': 157.85,
+  };
+  private intervals: Map<string, NodeJS.Timeout> = new Map();
+  private subscribers: Map<string, Set<(price: number) => void>> = new Map();
+
+  subscribe(symbol: string, callback: (price: number) => void) {
+    if (!this.subscribers.has(symbol)) {
+      this.subscribers.set(symbol, new Set());
+    }
+    this.subscribers.get(symbol)!.add(callback);
+
+    if (!this.intervals.has(symbol)) {
+      const interval = setInterval(() => {
+        const change = (Math.random() - 0.5) * 0.0003;
+        this.prices[symbol] = Number((this.prices[symbol] + change).toFixed(5));
+        this.subscribers.get(symbol)?.forEach(cb => cb(this.prices[symbol]));
+      }, 2000);
+      this.intervals.set(symbol, interval);
+    }
+
+    callback(this.prices[symbol]);
+    return () => {
+      this.subscribers.get(symbol)?.delete(callback);
+      if (this.subscribers.get(symbol)?.size === 0) {
+        const interval = this.intervals.get(symbol);
+        if (interval) clearInterval(interval);
+        this.intervals.delete(symbol);
+      }
+    };
+  }
+
+  disconnect() {
+    this.intervals.forEach(interval => clearInterval(interval));
+    this.intervals.clear();
+    this.subscribers.clear();
+  }
+}
+
+const mockPriceService = new MockPriceService();
+
+// ============ MAIN COMPONENT ============
 export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [useLiveData, setUseLiveData] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
+  
+  const [positions, setPositions] = useState<Position[]>([
+    { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
+    { id: '2', symbol: 'GBP/USD', direction: 'LONG', entryPrice: 1.2670, currentPrice: 1.2715, volume: 0.1, pnl: 450, pnlPercent: 0.36, stopLoss: 1.2640, takeProfit: 1.2770, frozen: true },
+    { id: '3', symbol: 'USD/JPY', direction: 'SHORT', entryPrice: 157.20, currentPrice: 157.85, volume: 0.05, pnl: -325, pnlPercent: -0.21, stopLoss: 158.00, takeProfit: 156.00, frozen: false },
+  ]);
+  
+  const [newsFeed, setNewsFeed] = useState<NewsItem[]>([
+    { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(), source: 'Reuters' },
+    { id: '2', headline: "ECB's Lagarde hints at July hike, cites wage pressures", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
+    { id: '3', headline: 'BoJ maintains ultra-loose policy, yen weakens', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
+  ]);
+  
+  const [equityData] = useState([
+    { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
+    { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
+    { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
+  ]);
+  
+  const [pnlData] = useState([
+    { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
+    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
+  ]);
+
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  // Live price updates
+  useEffect(() => {
+    const updatePrices = async () => {
+      if (useLiveData) {
+        const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY'];
+        const prices = await alphaVantage.getMultiplePrices(symbols);
+        
+        setPositions(prev => prev.map(p => {
+          const livePrice = prices[p.symbol];
+          if (livePrice) {
+            const newPnl = p.direction === 'LONG' 
+              ? (livePrice - p.entryPrice) * 10000 * p.volume
+              : (p.entryPrice - livePrice) * 10000 * p.volume;
+            return {
+              ...p,
+              currentPrice: livePrice,
+              pnl: newPnl,
+              pnlPercent: (newPnl / 10000) * 100,
+            };
+          }
+          return p;
+        }));
+        setWsConnected(true);
+      }
+    };
+
+    updatePrices();
+    const interval = setInterval(updatePrices, 30000);
+    return () => clearInterval(interval);
+  }, [useLiveData]);
+
+  // Mock price fallback
+  useEffect(() => {
+    if (!useLiveData) {
+      const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY'];
+      const unsubscribes = symbols.map(symbol => 
+        mockPriceService.subscribe(symbol, (price) => {
+          setPositions(prev => prev.map(p => 
+            p.symbol === symbol ? {
+              ...p,
+              currentPrice: price,
+              pnl: p.direction === 'LONG' 
+                ? (price - p.entryPrice) * 10000 * p.volume
+                : (p.entryPrice - price) * 10000 * p.volume,
+            } : p
+          ));
+          setWsConnected(true);
+        })
+      );
+      unsubscribeRef.current = () => unsubscribes.forEach(u => u());
+      return () => unsubscribeRef.current?.();
+    }
+  }, [useLiveData]);
+
+  // Bot simulation
+  useEffect(() => {
+    if (!botRunning) return;
+    const interval = setInterval(() => {
+      const newSignal: NewsItem = {
+        id: Date.now().toString(),
+        headline: `Breaking: ${['Fed', 'ECB', 'BOE'][Math.floor(Math.random() * 3)]} signals policy shift`,
+        currency: ['USD', 'EUR', 'GBP'][Math.floor(Math.random() * 3)],
+        sentiment: Math.random() > 0.5 ? 'hawkish' : 'dovish',
+        confidence: 0.6 + Math.random() * 0.35,
+        timestamp: new Date(),
+        source: ['Reuters', 'Bloomberg'][Math.floor(Math.random() * 2)],
+      };
+      setNewsFeed(prev => [newSignal, ...prev.slice(0, 19)]);
+      toast.success(`New signal: ${newSignal.currency} - ${newSignal.sentiment}`);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [botRunning]);
 
   const toggleBot = async () => {
     setBotRunning(!botRunning);
@@ -26,7 +255,7 @@ export default function Home() {
       const testTrade: TradeAlert = {
         symbol: 'EUR/USD',
         action: 'BUY',
-        price: 1.0892,
+        price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892,
         confidence: 0.85,
         signalType: 'Test Signal',
         volume: 0.1,
@@ -40,13 +269,30 @@ export default function Home() {
     }
   };
 
+  const exportData = () => {
+    const data = { positions, newsFeed, exportDate: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `forexpulse_export_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success('Data exported');
+  };
+
+  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
+  const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
+  const frozenCount = positions.filter(p => p.frozen).length;
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
       <Toaster position="top-right" />
       
-      <aside className={`fixed left-0 top-0 h-full transition-all duration-300 bg-gray-950 border-r border-gray-800 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}>
+      {/* Sidebar */}
+      <aside className={`fixed left-0 top-0 h-full transition-all duration-300 bg-gray-950 border-r border-gray-800 z-40 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}>
         <div className="p-4 border-b border-gray-800 flex justify-between items-center">
-          {!sidebarCollapsed && <span className="font-bold text-emerald-400">ForexPulse</span>}
+          {!sidebarCollapsed && <span className="font-bold text-emerald-400 text-lg">ForexPulse</span>}
           <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="text-gray-400 hover:text-white">
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -68,70 +314,184 @@ export default function Home() {
         </div>
       </aside>
 
+      {/* Main Content */}
       <main className={`transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}>
-        <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <Wifi className="w-4 h-4 text-emerald-400" />
-            <span className="text-sm text-gray-400">Live Demo Mode</span>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={sendTestAlert} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
-              <MessageCircle className="w-4 h-4" /> Test Alert
-            </button>
-            <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm ${botRunning ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-              {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              {botRunning ? 'Bot Active' : 'Start Bot'}
-            </button>
+        {/* Header */}
+        <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${wsConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                {useLiveData ? 'Live Data' : 'Demo Mode'}
+              </div>
+              <button 
+                onClick={() => setUseLiveData(!useLiveData)} 
+                className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useLiveData ? '📡 Live' : '🎮 Demo'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={sendTestAlert} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
+                <MessageCircle className="w-4 h-4" /> Test Alert
+              </button>
+              <button onClick={exportData} className="bg-gray-800 text-gray-400 hover:bg-gray-700 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
+                <Download className="w-4 h-4" /> Export
+              </button>
+              <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
+                {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                {botRunning ? 'Bot Active' : 'Start Bot'}
+              </button>
+            </div>
           </div>
         </header>
 
         <div className="p-6">
+          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
-            <div className="text-center py-20">
-              <Bot className="w-20 h-20 text-emerald-400 mx-auto mb-4" />
-              <h1 className="text-3xl font-bold mb-2">ForexPulse is Running!</h1>
-              <p className="text-gray-400 mb-6">Your Telegram bot is configured and ready to send alerts.</p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto mb-8">
-                <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                  <div className="text-green-400 text-2xl mb-2">✓</div>
-                  <div className="font-medium">Bot Token</div>
-                  <div className="text-xs text-gray-500">Configured</div>
+            <div className="space-y-6">
+              {/* KPI Cards */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <div className="text-xs text-gray-400">Total P&L</div>
+                  <div className={`text-2xl font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ${totalPnL >= 0 ? '+' : ''}{totalPnL}
+                  </div>
                 </div>
-                <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                  <div className="text-green-400 text-2xl mb-2">✓</div>
-                  <div className="font-medium">Chat ID</div>
-                  <div className="text-xs text-gray-500">7724961440</div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <div className="text-xs text-gray-400">Win Rate</div>
+                  <div className="text-2xl font-bold text-purple-400">{winRate.toFixed(0)}%</div>
                 </div>
-                <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                  <div className={`text-2xl mb-2 ${botRunning ? 'text-green-400' : 'text-yellow-400'}`}>{botRunning ? '●' : '○'}</div>
-                  <div className="font-medium">Bot Status</div>
-                  <div className="text-xs text-gray-500">{botRunning ? 'Active' : 'Standby'}</div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <div className="text-xs text-gray-400">Active Positions</div>
+                  <div className="text-2xl font-bold">{positions.length}</div>
+                  {frozenCount > 0 && <div className="text-xs text-yellow-500">{frozenCount} frozen</div>}
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <div className="text-xs text-gray-400">Bot Status</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
+                    <span className="text-sm">{botRunning ? 'Trading' : 'Standby'}</span>
+                  </div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <div className="text-xs text-gray-400">Data Source</div>
+                  <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
                 </div>
               </div>
-              
-              <button onClick={sendTestAlert} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-6 py-3 rounded-lg font-medium">
-                📱 Send Test Alert to Telegram
-              </button>
-              
-              <p className="text-xs text-gray-500 mt-6">
-                Make sure you have started a chat with your bot first (search for it on Telegram and click "Start")
-              </p>
+
+              {/* Charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <AreaChart data={equityData}>
+                      <CartesianGrid stroke="#1f2937" />
+                      <XAxis dataKey="time" stroke="#6b7280" fontSize={11} />
+                      <YAxis stroke="#6b7280" fontSize={11} />
+                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                      <Area type="monotone" dataKey="equity" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-4">Daily P&L</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={pnlData}>
+                      <CartesianGrid stroke="#1f2937" />
+                      <XAxis dataKey="date" stroke="#6b7280" fontSize={11} />
+                      <YAxis stroke="#6b7280" fontSize={11} />
+                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                      <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                        {pnlData.map((entry, idx) => <Cell key={idx} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Positions Table */}
+              <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
+                  <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
+                  <span className="text-xs text-gray-500">Prices update every 30 seconds</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-800/50">
+                      <tr className="text-gray-400">
+                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
+                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
+                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">P&L %</th>
+                        <th className="px-4 py-2 text-left">SL/TP</th><th className="px-4 py-2 text-left">Status</th>
+                       </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map(p => (
+                        <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                          <td className="px-4 py-3 font-medium">{p.symbol}</td>
+                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{p.direction}</span></td>
+                          <td className="px-4 py-3 font-mono">{p.entryPrice.toFixed(5)}</td>
+                          <td className="px-4 py-3 font-mono text-blue-400">{p.currentPrice.toFixed(5)}</td>
+                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}</td>
+                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-xs text-gray-500">{p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}</td>
+                          <td className="px-4 py-3">{p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* News Feed */}
+              <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
+                <div className="flex justify-between items-center border-b border-gray-800 px-4 py-3">
+                  <h3 className="font-medium flex items-center gap-2"><Radar className="w-4 h-4 text-blue-400" /> Live AI News Feed</h3>
+                  <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /><span className="text-xs text-emerald-400">Monitoring</span></div>
+                </div>
+                <div className="divide-y divide-gray-800 max-h-64 overflow-y-auto">
+                  {newsFeed.map(signal => (
+                    <div key={signal.id} className="p-3 hover:bg-gray-800/30">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-800">{signal.currency}</span>
+                        <span className={`flex items-center gap-1 text-xs ${signal.sentiment === 'hawkish' ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {signal.sentiment === 'hawkish' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          {signal.sentiment.toUpperCase()}
+                        </span>
+                        <span className="text-xs text-gray-600">{(signal.confidence * 100).toFixed(0)}% conf</span>
+                        <span className="text-xs text-gray-600">{signal.source}</span>
+                      </div>
+                      <p className="text-sm">{signal.headline}</p>
+                      <div className="text-xs text-gray-500 mt-1">{signal.timestamp.toLocaleTimeString()}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
+          {/* Settings Tab */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
                 <h2 className="text-xl font-bold mb-4">⚙️ Configuration</h2>
                 <div className="space-y-3">
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Telegram Bot Token:</span>
+                    <span className="text-gray-400">Telegram Bot:</span>
+                    <span className="text-green-400">✓ Connected</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">Chat ID:</span>
+                    <span className="text-green-400 font-mono">7724961440</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">Alpha Vantage API:</span>
                     <span className="text-green-400">✓ Configured</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Telegram Chat ID:</span>
-                    <span className="text-green-400">7724961440</span>
+                    <span className="text-gray-400">Data Source:</span>
+                    <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Live (Alpha Vantage)" : "Demo Mode"}</span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Bot Status:</span>
@@ -139,8 +499,13 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
-                  <p className="text-sm text-gray-300">📌 To receive alerts, message your bot on Telegram first:</p>
-                  <p className="text-xs text-gray-400 mt-2">Search for your bot → Click "Start" → Type /start → Then click Test Alert</p>
+                  <p className="text-sm text-gray-300">📌 How to use:</p>
+                  <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
+                    <li>Message your bot on Telegram (click Start)</li>
+                    <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin monitoring</li>
+                    <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram</li>
+                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
+                  </ol>
                 </div>
               </div>
             </div>
@@ -149,4 +514,4 @@ export default function Home() {
       </main>
     </div>
   );
-}
+          }
