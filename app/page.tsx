@@ -12,10 +12,35 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
+import { AutomatedTradingBot, TradingConfig } from './lib/automated-trading';
+import { AlphaVantageAPI } from './lib/broker-api';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
+
+// ============ AUTOMATED TRADING BOT CONFIGURATION ============
+const tradingConfig: TradingConfig = {
+  enabled: true,
+  symbols: ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'],
+  strategies: [
+    { name: 'RSI Strategy', type: 'RSI', parameters: { period: 14 } },
+    { name: 'MACD Strategy', type: 'MACD', parameters: {} },
+    { name: 'MA Crossover', type: 'MA_CROSSOVER', parameters: { fastPeriod: 10, slowPeriod: 30 } },
+    { name: 'Bollinger Bands', type: 'BOLLINGER', parameters: {} },
+    { name: 'News Sentiment', type: 'NEWS_SENTIMENT', parameters: {} }
+  ],
+  maxPositionSize: 0.1,
+  maxDailyLoss: 500,
+  maxDailyTrades: 10,
+  riskPerTrade: 1.5,
+  minConfidence: 0.65,
+  tradingHours: { start: 0, end: 24 } // 24/7 trading
+};
+
+// Initialize trading bot and API
+const tradingBot = new AutomatedTradingBot(tradingConfig, telegramBot);
+const alphaVantage = new AlphaVantageAPI();
 
 // ============ TYPES ============
 interface Position {
@@ -42,100 +67,14 @@ interface NewsItem {
   source: string;
 }
 
-// ============ ALPHA VANTAGE API SERVICE ============
-class AlphaVantageService {
-  private apiKey: string;
-  private cache: Map<string, { price: number; timestamp: number }> = new Map();
-  private cacheDuration = 30000; // 30 seconds cache
-
-  constructor() {
-    this.apiKey = process.env.NEXT_PUBLIC_ALPHA_VANTAGE_KEY || 'MUTVWYGAE0PTMVI1';
+// Helper function to calculate P&L
+const calculatePnL = (position: Position, currentPrice: number): number => {
+  if (position.direction === 'LONG') {
+    return (currentPrice - position.entryPrice) * 10000 * position.volume;
+  } else {
+    return (position.entryPrice - currentPrice) * 10000 * position.volume;
   }
-
-  async getLivePrice(symbol: string): Promise<number | null> {
-    // Check cache first
-    const cached = this.cache.get(symbol);
-    if (cached && Date.now() - cached.timestamp < this.cacheDuration) {
-      return cached.price;
-    }
-
-    try {
-      const fromTo = symbol.replace('/', '');
-      const fromCurrency = fromTo.slice(0, 3);
-      const toCurrency = fromTo.slice(3);
-      const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${fromCurrency}&to_currency=${toCurrency}&apikey=${this.apiKey}`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      if (data['Realtime Currency Exchange Rate']) {
-        const price = parseFloat(data['Realtime Currency Exchange Rate']['5. Exchange Rate']);
-        this.cache.set(symbol, { price, timestamp: Date.now() });
-        return price;
-      }
-      return null;
-    } catch (error) {
-      console.error('Alpha Vantage error:', error);
-      return null;
-    }
-  }
-
-  async getMultiplePrices(symbols: string[]): Promise<Record<string, number>> {
-    const prices: Record<string, number> = {};
-    for (const symbol of symbols) {
-      const price = await this.getLivePrice(symbol);
-      if (price) prices[symbol] = price;
-    }
-    return prices;
-  }
-}
-
-const alphaVantage = new AlphaVantageService();
-
-// ============ MOCK PRICE SERVICE (FALLBACK) ============
-class MockPriceService {
-  private prices: Record<string, number> = {
-    'EUR/USD': 1.0892,
-    'GBP/USD': 1.2715,
-    'USD/JPY': 157.85,
-  };
-  private intervals: Map<string, NodeJS.Timeout> = new Map();
-  private subscribers: Map<string, Set<(price: number) => void>> = new Map();
-
-  subscribe(symbol: string, callback: (price: number) => void) {
-    if (!this.subscribers.has(symbol)) {
-      this.subscribers.set(symbol, new Set());
-    }
-    this.subscribers.get(symbol)!.add(callback);
-
-    if (!this.intervals.has(symbol)) {
-      const interval = setInterval(() => {
-        const change = (Math.random() - 0.5) * 0.0003;
-        this.prices[symbol] = Number((this.prices[symbol] + change).toFixed(5));
-        this.subscribers.get(symbol)?.forEach(cb => cb(this.prices[symbol]));
-      }, 2000);
-      this.intervals.set(symbol, interval);
-    }
-
-    callback(this.prices[symbol]);
-    return () => {
-      this.subscribers.get(symbol)?.delete(callback);
-      if (this.subscribers.get(symbol)?.size === 0) {
-        const interval = this.intervals.get(symbol);
-        if (interval) clearInterval(interval);
-        this.intervals.delete(symbol);
-      }
-    };
-  }
-
-  disconnect() {
-    this.intervals.forEach(interval => clearInterval(interval));
-    this.intervals.clear();
-    this.subscribers.clear();
-  }
-}
-
-const mockPriceService = new MockPriceService();
+};
 
 // ============ MAIN COMPONENT ============
 export default function Home() {
@@ -144,123 +83,202 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
+  const [botStatus, setBotStatus] = useState({ activeTrades: 0, dailyPnL: 0, dailyTrades: 0 });
   
   const [positions, setPositions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
     { id: '2', symbol: 'GBP/USD', direction: 'LONG', entryPrice: 1.2670, currentPrice: 1.2715, volume: 0.1, pnl: 450, pnlPercent: 0.36, stopLoss: 1.2640, takeProfit: 1.2770, frozen: true },
     { id: '3', symbol: 'USD/JPY', direction: 'SHORT', entryPrice: 157.20, currentPrice: 157.85, volume: 0.05, pnl: -325, pnlPercent: -0.21, stopLoss: 158.00, takeProfit: 156.00, frozen: false },
+    { id: '4', symbol: 'AUD/USD', direction: 'LONG', entryPrice: 0.6620, currentPrice: 0.6645, volume: 0.1, pnl: 250, pnlPercent: 0.38, stopLoss: 0.6590, takeProfit: 0.6680, frozen: false },
+    { id: '5', symbol: 'USD/CAD', direction: 'SHORT', entryPrice: 1.3740, currentPrice: 1.3715, volume: 0.1, pnl: 250, pnlPercent: 0.18, stopLoss: 1.3770, takeProfit: 1.3680, frozen: false },
   ]);
   
   const [newsFeed, setNewsFeed] = useState<NewsItem[]>([
     { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(), source: 'Reuters' },
     { id: '2', headline: "ECB's Lagarde hints at July hike, cites wage pressures", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
     { id: '3', headline: 'BoJ maintains ultra-loose policy, yen weakens', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
+    { id: '4', headline: 'RBA holds but removes hawkish bias, AUD slips', currency: 'AUD', sentiment: 'dovish', confidence: 0.74, timestamp: new Date(), source: 'AFR' },
+    { id: '5', headline: 'Canada jobs data beats expectations, CAD jumps', currency: 'CAD', sentiment: 'hawkish', confidence: 0.81, timestamp: new Date(), source: 'Bloomberg' },
   ]);
   
   const [equityData] = useState([
     { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
     { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
     { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
+    { time: '12:30', equity: 10420 }, { time: '13:00', equity: 10380 },
   ]);
   
   const [pnlData] = useState([
     { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
-    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
+    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, { date: 'Sat', pnl: 180 }, { date: 'Sun', pnl: 90 },
   ]);
 
-  const unsubscribeRef = useRef<(() => void) | null>(null);
-
-  // Live price updates
+  // Update bot status periodically
   useEffect(() => {
-    const updatePrices = async () => {
-      if (useLiveData) {
-        const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY'];
-        const prices = await alphaVantage.getMultiplePrices(symbols);
-        
+    const interval = setInterval(() => {
+      const status = tradingBot.getStatus();
+      setBotStatus({
+        activeTrades: status.activeTrades,
+        dailyPnL: status.dailyPnL,
+        dailyTrades: status.dailyTrades
+      });
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Live price updates and trading bot integration
+  useEffect(() => {
+    if (!botRunning) return;
+    
+    let isMounted = true;
+    
+    const fetchPricesAndTrade = async () => {
+      for (const symbol of tradingConfig.symbols) {
+        try {
+          const price = await alphaVantage.getLivePrice(symbol);
+          if (price && isMounted) {
+            // Update trading bot with new price
+            tradingBot.updatePrice(symbol, price);
+            
+            // Update positions in UI
+            setPositions(prev => prev.map(p => 
+              p.symbol === symbol ? { 
+                ...p, 
+                currentPrice: price, 
+                pnl: calculatePnL(p, price),
+                pnlPercent: (calculatePnL(p, price) / 10000) * 100
+              } : p
+            ));
+            setWsConnected(true);
+          }
+        } catch (error) {
+          console.error(`Error fetching price for ${symbol}:`, error);
+        }
+      }
+    };
+
+    fetchPricesAndTrade();
+    const interval = setInterval(fetchPricesAndTrade, 30000); // Every 30 seconds
+    
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [botRunning]);
+
+  // Mock price fallback when live data is off
+  useEffect(() => {
+    if (!botRunning || useLiveData) return;
+    
+    const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
+    const intervals: NodeJS.Timeout[] = [];
+    
+    symbols.forEach(symbol => {
+      const interval = setInterval(() => {
+        const change = (Math.random() - 0.5) * 0.0003;
         setPositions(prev => prev.map(p => {
-          const livePrice = prices[p.symbol];
-          if (livePrice) {
-            const newPnl = p.direction === 'LONG' 
-              ? (livePrice - p.entryPrice) * 10000 * p.volume
-              : (p.entryPrice - livePrice) * 10000 * p.volume;
+          if (p.symbol === symbol) {
+            const newPrice = Number((p.currentPrice + change).toFixed(5));
+            const newPnl = calculatePnL(p, newPrice);
             return {
               ...p,
-              currentPrice: livePrice,
+              currentPrice: newPrice,
               pnl: newPnl,
-              pnlPercent: (newPnl / 10000) * 100,
+              pnlPercent: (newPnl / 10000) * 100
             };
           }
           return p;
         }));
+        
+        // Also update trading bot with mock price
+        const mockPrice = 1.0892 + (Math.random() - 0.5) * 0.005;
+        tradingBot.updatePrice(symbol, mockPrice);
         setWsConnected(true);
-      }
-    };
+      }, 2000);
+      intervals.push(interval);
+    });
+    
+    return () => intervals.forEach(interval => clearInterval(interval));
+  }, [botRunning, useLiveData]);
 
-    updatePrices();
-    const interval = setInterval(updatePrices, 30000);
-    return () => clearInterval(interval);
-  }, [useLiveData]);
-
-  // Mock price fallback
+  // News sentiment effect - feed news to trading bot
   useEffect(() => {
-    if (!useLiveData) {
-      const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY'];
-      const unsubscribes = symbols.map(symbol => 
-        mockPriceService.subscribe(symbol, (price) => {
-          setPositions(prev => prev.map(p => 
-            p.symbol === symbol ? {
-              ...p,
-              currentPrice: price,
-              pnl: p.direction === 'LONG' 
-                ? (price - p.entryPrice) * 10000 * p.volume
-                : (p.entryPrice - price) * 10000 * p.volume,
-            } : p
-          ));
-          setWsConnected(true);
-        })
-      );
-      unsubscribeRef.current = () => unsubscribes.forEach(u => u());
-      return () => unsubscribeRef.current?.();
+    if (!botRunning || newsFeed.length === 0) return;
+    
+    const latestNews = newsFeed[0];
+    if (latestNews && latestNews.confidence > 0.7) {
+      const relatedPosition = positions.find(p => p.symbol.includes(latestNews.currency));
+      if (relatedPosition) {
+        tradingBot.updatePrice(
+          relatedPosition.symbol,
+          relatedPosition.currentPrice,
+          latestNews.sentiment
+        );
+      }
     }
-  }, [useLiveData]);
+  }, [newsFeed, botRunning, positions]);
 
-  // Bot simulation
+  // Bot simulation - generate mock news
   useEffect(() => {
     if (!botRunning) return;
+    
     const interval = setInterval(() => {
+      const headlines = [
+        `Fed ${Math.random() > 0.5 ? 'hints at' : 'signals'} rate change`,
+        `ECB ${Math.random() > 0.5 ? 'hawkish' : 'dovish'} comments surprise markets`,
+        `BOJ maintains policy as expected`,
+        `Strong ${['US', 'Eurozone', 'UK', 'Japan'][Math.floor(Math.random() * 4)]} economic data released`,
+        `Geopolitical tensions impact ${['USD', 'EUR', 'GBP', 'JPY'][Math.floor(Math.random() * 4)]}`
+      ];
+      
+      const currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD'];
+      const sentiment = Math.random() > 0.5 ? 'hawkish' : 'dovish';
+      const currency = currencies[Math.floor(Math.random() * currencies.length)];
+      
       const newSignal: NewsItem = {
         id: Date.now().toString(),
-        headline: `Breaking: ${['Fed', 'ECB', 'BOE'][Math.floor(Math.random() * 3)]} signals policy shift`,
-        currency: ['USD', 'EUR', 'GBP'][Math.floor(Math.random() * 3)],
-        sentiment: Math.random() > 0.5 ? 'hawkish' : 'dovish',
+        headline: headlines[Math.floor(Math.random() * headlines.length)],
+        currency: currency,
+        sentiment: sentiment,
         confidence: 0.6 + Math.random() * 0.35,
         timestamp: new Date(),
-        source: ['Reuters', 'Bloomberg'][Math.floor(Math.random() * 2)],
+        source: ['Reuters', 'Bloomberg', 'FT', 'WSJ'][Math.floor(Math.random() * 4)]
       };
+      
       setNewsFeed(prev => [newSignal, ...prev.slice(0, 19)]);
-      toast.success(`New signal: ${newSignal.currency} - ${newSignal.sentiment}`);
-    }, 15000);
+      toast.success(`📰 New signal: ${currency} - ${sentiment.toUpperCase()}`, { duration: 3000 });
+    }, 20000);
+    
     return () => clearInterval(interval);
   }, [botRunning]);
 
   const toggleBot = async () => {
-    setBotRunning(!botRunning);
-    await telegramBot.sendAlert('Trading Bot', botRunning ? 'Bot paused' : 'Bot activated', 'info');
-    toast.success(botRunning ? 'Bot paused' : 'Bot activated');
+    if (!botRunning) {
+      tradingBot.start();
+      setBotRunning(true);
+      await telegramBot.sendAlert('Trading Bot', '🤖 Bot has been activated and is monitoring markets', 'info');
+      toast.success('🤖 Trading bot activated');
+    } else {
+      tradingBot.stop('Manual stop');
+      setBotRunning(false);
+      await telegramBot.sendAlert('Trading Bot', '⏸️ Bot has been paused', 'warning');
+      toast('⏸️ Bot paused');
+    }
   };
 
   const sendTestAlert = async () => {
     toast.loading('Sending test alert...', { id: 'test' });
     try {
+      const eurPrice = positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892;
       const testTrade: TradeAlert = {
         symbol: 'EUR/USD',
         action: 'BUY',
-        price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892,
+        price: eurPrice,
         confidence: 0.85,
         signalType: 'Test Signal',
         volume: 0.1,
-        stopLoss: 1.0860,
-        takeProfit: 1.0950
+        stopLoss: eurPrice * 0.99,
+        takeProfit: eurPrice * 1.02
       };
       await telegramBot.sendTradeAlert(testTrade);
       toast.success('✅ Alert sent to Telegram! Check your phone.', { id: 'test' });
@@ -270,7 +288,13 @@ export default function Home() {
   };
 
   const exportData = () => {
-    const data = { positions, newsFeed, exportDate: new Date().toISOString() };
+    const data = { 
+      positions, 
+      newsFeed, 
+      botStatus,
+      exportDate: new Date().toISOString(),
+      activeTrades: tradingBot.getActiveTrades()
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -278,7 +302,7 @@ export default function Home() {
     a.download = `forexpulse_export_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success('Data exported');
+    toast.success('Data exported successfully');
   };
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
@@ -299,7 +323,11 @@ export default function Home() {
         </div>
         <nav className="p-2">
           {['dashboard', 'settings'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
+            <button 
+              key={tab} 
+              onClick={() => setActiveTab(tab)} 
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}
+            >
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize">{tab}</span>}
@@ -331,7 +359,24 @@ export default function Home() {
                 {useLiveData ? '📡 Live' : '🎮 Demo'}
               </button>
             </div>
+            
             <div className="flex gap-2">
+              {/* Bot Status Indicators */}
+              <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-400" />
+                <span>{botStatus.activeTrades} Active Trades</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-blue-400" />
+                <span className={botStatus.dailyPnL >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  Daily P&L: ${botStatus.dailyPnL.toFixed(2)}
+                </span>
+              </div>
+              <div className="px-3 py-1.5 rounded-lg bg-gray-800 text-sm flex items-center gap-2">
+                <Activity className="w-4 h-4 text-purple-400" />
+                <span>{botStatus.dailyTrades} Trades Today</span>
+              </div>
+              
               <button onClick={sendTestAlert} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
                 <MessageCircle className="w-4 h-4" /> Test Alert
               </button>
@@ -355,7 +400,7 @@ export default function Home() {
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Total P&L</div>
                   <div className={`text-2xl font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ${totalPnL >= 0 ? '+' : ''}{totalPnL}
+                    ${totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(0)}
                   </div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
@@ -420,23 +465,39 @@ export default function Home() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-800/50">
                       <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
-                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
-                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">P&L %</th>
-                        <th className="px-4 py-2 text-left">SL/TP</th><th className="px-4 py-2 text-left">Status</th>
+                        <th className="px-4 py-2 text-left">Symbol</th>
+                        <th className="px-4 py-2 text-left">Direction</th>
+                        <th className="px-4 py-2 text-left">Entry</th>
+                        <th className="px-4 py-2 text-left">Current</th>
+                        <th className="px-4 py-2 text-left">P&L</th>
+                        <th className="px-4 py-2 text-left">P&L %</th>
+                        <th className="px-4 py-2 text-left">SL/TP</th>
+                        <th className="px-4 py-2 text-left">Status</th>
                        </tr>
                     </thead>
                     <tbody>
                       {positions.map(p => (
                         <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                           <td className="px-4 py-3 font-medium">{p.symbol}</td>
-                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{p.direction}</span></td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {p.direction}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 font-mono">{p.entryPrice.toFixed(5)}</td>
                           <td className="px-4 py-3 font-mono text-blue-400">{p.currentPrice.toFixed(5)}</td>
-                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}</td>
-                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%</td>
-                          <td className="px-4 py-3 text-xs text-gray-500">{p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}</td>
-                          <td className="px-4 py-3">{p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}</td>
+                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}
+                          </td>
+                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-500">
+                            {p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -490,21 +551,28 @@ export default function Home() {
                     <span className="text-green-400">✓ Configured</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">Trading Bot:</span>
+                    <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Running" : "🟡 Stopped"}</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">Strategies Active:</span>
+                    <span className="text-blue-400">5 (RSI, MACD, MA, Bollinger, News)</span>
+                  </div>
+                  <div className="flex justify-between py-2">
                     <span className="text-gray-400">Data Source:</span>
                     <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Live (Alpha Vantage)" : "Demo Mode"}</span>
                   </div>
-                  <div className="flex justify-between py-2">
-                    <span className="text-gray-400">Bot Status:</span>
-                    <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Running" : "🟡 Stopped"}</span>
-                  </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
-                  <p className="text-sm text-gray-300">📌 How to use:</p>
+                  <p className="text-sm text-gray-300">📌 How to use the automated trading bot:</p>
                   <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
                     <li>Message your bot on Telegram (click Start)</li>
-                    <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin monitoring</li>
-                    <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram</li>
-                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
+                    <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
+                    <li>The bot analyzes RSI, MACD, MA Crossovers, Bollinger Bands, and News Sentiment</li>
+                    <li>Trades are executed when multiple strategies agree (consensus trading)</li>
+                    <li>Each trade has automatic Stop Loss and Take Profit</li>
+                    <li>Daily limits: {tradingConfig.maxDailyTrades} trades max, ${tradingConfig.maxDailyLoss} max loss</li>
+                    <li>All trades are reported to your Telegram</li>
                   </ol>
                 </div>
               </div>
@@ -514,4 +582,4 @@ export default function Home() {
       </main>
     </div>
   );
-          }
+                }
