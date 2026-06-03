@@ -39,7 +39,6 @@ export class MetaApiBroker {
         currency: info.currency
       };
     } catch (error) {
-      console.error('Error getting account info:', error);
       return null;
     }
   }
@@ -56,16 +55,12 @@ export class MetaApiBroker {
       }
       return prices;
     } catch (error) {
-      console.error('Error fetching prices:', error);
       return {};
     }
   }
 
   async placeOrder(symbol: string, action: 'BUY' | 'SELL', volume: number, stopLoss?: number, takeProfit?: number) {
-    if (!this.connected) {
-      console.log('MT5 not connected');
-      return { success: false };
-    }
+    if (!this.connected) return { success: false };
 
     try {
       const order = {
@@ -76,13 +71,10 @@ export class MetaApiBroker {
         takeProfit: takeProfit,
         comment: 'ForexPulse Bot'
       };
-      
       const result = await this.account.trade(order);
-      console.log(`✅ Order placed: ${action} ${symbol}`);
       return { orderId: result.orderId, filledPrice: result.price, success: true };
     } catch (error) {
-      console.error('Error placing order:', error);
-      return { success: false, error };
+      return { success: false };
     }
   }
 
