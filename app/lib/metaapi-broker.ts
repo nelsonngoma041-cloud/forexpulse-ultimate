@@ -7,7 +7,7 @@ export class MetaApiBroker {
   private connected: boolean = false;
 
   constructor() {
-    const token = process.env.METAAPI_TOKEN || '';
+    const token = process.env.NEXT_PUBLIC_METAAPI_TOKEN || '';
     this.api = new MetaApi(token);
   }
 
@@ -18,11 +18,7 @@ export class MetaApiBroker {
       await this.account.deploy();
       await this.account.waitConnected();
       this.connected = true;
-      console.log('✅ Connected to MT5 demo account successfully!');
-      
-      // Get account info to verify
-      const info = await this.getAccountInfo();
-      console.log(`Account balance: $${info.balance}`);
+      console.log('✅ Connected to MT5 successfully!');
       return true;
     } catch (error) {
       console.error('❌ MT5 connection failed:', error);
@@ -67,8 +63,8 @@ export class MetaApiBroker {
 
   async placeOrder(symbol: string, action: 'BUY' | 'SELL', volume: number, stopLoss?: number, takeProfit?: number) {
     if (!this.connected) {
-      console.log('MT5 not connected - demo order only');
-      return { orderId: `demo_${Date.now()}`, filledPrice: 1.0892, success: false };
+      console.log('MT5 not connected');
+      return { success: false };
     }
 
     try {
@@ -82,38 +78,15 @@ export class MetaApiBroker {
       };
       
       const result = await this.account.trade(order);
-      console.log(`✅ Order placed: ${action} ${symbol} at ${result.price}`);
+      console.log(`✅ Order placed: ${action} ${symbol}`);
       return { orderId: result.orderId, filledPrice: result.price, success: true };
     } catch (error) {
       console.error('Error placing order:', error);
-      return { success: false, error: error };
-    }
-  }
-
-  async getOpenPositions() {
-    if (!this.connected) return [];
-    try {
-      const positions = await this.account.getPositions();
-      return positions;
-    } catch (error) {
-      console.error('Error getting positions:', error);
-      return [];
-    }
-  }
-
-  async closeOrder(orderId: string) {
-    if (!this.connected) return false;
-    try {
-      await this.account.trade({ orderId: orderId, action: 'CLOSE' });
-      console.log(`✅ Order closed: ${orderId}`);
-      return true;
-    } catch (error) {
-      console.error('Error closing order:', error);
-      return false;
+      return { success: false, error };
     }
   }
 
   isConnected() {
     return this.connected;
   }
-  }
+}
