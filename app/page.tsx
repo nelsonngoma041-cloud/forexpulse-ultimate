@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
 import { 
   Bot, MessageCircle, Play, Pause, Activity, Settings, 
@@ -13,13 +13,15 @@ import {
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
+import { MetaApiBroker } from './lib/metaapi-broker';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
-// ============ ALPHA VANTAGE API ============
+// ============ API INITIALIZATION ============
 const alphaVantage = new AlphaVantageAPI();
+const metaApiBroker = new MetaApiBroker();
 
 // ============ TYPES ============
 interface Position {
@@ -55,12 +57,17 @@ const calculatePnL = (position: Position, currentPrice: number): number => {
 };
 
 export default function Home() {
+  // UI State
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
+  const [useMT5, setUseMT5] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [mt5Connected, setMt5Connected] = useState(false);
+  const [mt5AccountInfo, setMt5AccountInfo] = useState<any>(null);
   
+  // Data State
   const [positions, setPositions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
     { id: '2', symbol: 'GBP/USD', direction: 'LONG', entryPrice: 1.2670, currentPrice: 1.2715, volume: 0.1, pnl: 450, pnlPercent: 0.36, stopLoss: 1.2640, takeProfit: 1.2770, frozen: true },
@@ -71,8 +78,8 @@ export default function Home() {
   
   const [newsFeed, setNewsFeed] = useState<NewsItem[]>([
     { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(), source: 'Reuters' },
-    { id: '2', headline: "ECB's Lagarde hints at July hike, cites wage pressures", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
-    { id: '3', headline: 'BoJ maintains ultra-loose policy, yen weakens', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
+    { id: '2', headline: "ECB's Lagarde hints at July hike", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
+    { id: '3', headline: 'BoJ maintains ultra-loose policy', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
   ]);
   
   const [equityData] = useState([
@@ -86,7 +93,23 @@ export default function Home() {
     { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
   ]);
 
-  // Live price updates
+  // ============ MT5 CONNECTION ============
+  useEffect(() => {
+    if (botRunning && useMT5) {
+      const accountId = process.env.NEXT_PUBLIC_METAAPI_ACCOUNT_ID || 'c20cd5b54db7a38402208da1456127f';
+      metaApiBroker.connect(accountId).then((connected) => {
+        setMt5Connected(connected);
+        if (connected) {
+          metaApiBroker.getAccountInfo().then(setMt5AccountInfo);
+          toast.success('✅ Connected to MT5 Demo Account');
+        } else {
+          toast.error('❌ MT5 connection failed');
+        }
+      });
+    }
+  }, [botRunning, useMT5]);
+
+  // ============ LIVE PRICE UPDATES ============
   useEffect(() => {
     if (!botRunning) return;
     
@@ -98,7 +121,10 @@ export default function Home() {
         try {
           let price: number | null = null;
           
-          if (useLiveData) {
+          if (useMT5 && mt5Connected) {
+            const prices = await metaApiBroker.getPrices([symbol]);
+            price = prices[symbol] || null;
+          } else if (useLiveData) {
             price = await alphaVantage.getLivePrice(symbol);
           } else {
             price = 1.0892 + (Math.random() - 0.5) * 0.005;
@@ -128,9 +154,9 @@ export default function Home() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [botRunning, useLiveData]);
+  }, [botRunning, useLiveData, useMT5, mt5Connected]);
 
-  // Generate mock news
+  // ============ GENERATE MOCK NEWS ============
   useEffect(() => {
     if (!botRunning) return;
     
@@ -139,6 +165,7 @@ export default function Home() {
         `Fed ${Math.random() > 0.5 ? 'hints at' : 'signals'} rate change`,
         `ECB ${Math.random() > 0.5 ? 'hawkish' : 'dovish'} comments`,
         `BOJ maintains policy as expected`,
+        `Strong economic data released`,
       ];
       
       const currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD'];
@@ -161,6 +188,7 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [botRunning]);
 
+  // ============ BOT CONTROLS ============
   const toggleBot = async () => {
     if (!botRunning) {
       setBotRunning(true);
@@ -205,6 +233,7 @@ export default function Home() {
     toast.success('Data exported');
   };
 
+  // ============ CALCULATIONS ============
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
   const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
   const frozenCount = positions.filter(p => p.frozen).length;
@@ -213,6 +242,7 @@ export default function Home() {
     <div className="min-h-screen bg-gray-950 text-gray-200">
       <Toaster position="top-right" />
       
+      {/* Sidebar */}
       <aside className={`fixed left-0 top-0 h-full transition-all duration-300 bg-gray-950 border-r border-gray-800 z-40 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}>
         <div className="p-4 border-b border-gray-800 flex justify-between items-center">
           {!sidebarCollapsed && <span className="font-bold text-emerald-400 text-lg">ForexPulse</span>}
@@ -222,7 +252,11 @@ export default function Home() {
         </div>
         <nav className="p-2">
           {['dashboard', 'settings'].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
+            <button 
+              key={tab} 
+              onClick={() => setActiveTab(tab)} 
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}
+            >
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize">{tab}</span>}
@@ -237,17 +271,44 @@ export default function Home() {
         </div>
       </aside>
 
+      {/* Main Content */}
       <main className={`transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}>
+        {/* Header */}
         <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${wsConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
                 {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {useLiveData ? 'Alpha Vantage' : 'Demo Mode'}
+                {useMT5 ? 'MT5 Live' : (useLiveData ? 'Alpha Vantage' : 'Demo Mode')}
               </div>
-              <button onClick={() => setUseLiveData(!useLiveData)} className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}>
-                {useLiveData ? '📡 Live' : '🎮 Demo'}
+              
+              {/* Data Source Toggle Buttons */}
+              <button 
+                onClick={() => {
+                  setUseMT5(false);
+                  setUseLiveData(!useLiveData);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useLiveData && !useMT5 ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useLiveData && !useMT5 ? '📡 Live' : '🎮 Demo'}
               </button>
+              
+              <button 
+                onClick={() => {
+                  setUseMT5(true);
+                  setUseLiveData(false);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useMT5 ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useMT5 ? '📈 MT5 Mode' : '🔌 Use MT5'}
+              </button>
+              
+              {/* MT5 Status */}
+              {mt5Connected && useMT5 && (
+                <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  <span>MT5: ${mt5AccountInfo?.balance?.toFixed(2)}</span>
+                </div>
+              )}
             </div>
             
             <div className="flex gap-2">
@@ -266,8 +327,10 @@ export default function Home() {
         </header>
 
         <div className="p-6">
+          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
+              {/* KPI Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Total P&L</div>
@@ -293,10 +356,11 @@ export default function Home() {
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Data Source</div>
-                  <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
+                  <div className="text-sm font-bold mt-1 text-blue-400">{useMT5 ? 'MT5 Demo' : (useLiveData ? 'Alpha Vantage' : 'Demo')}</div>
                 </div>
               </div>
 
+              {/* Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
@@ -326,6 +390,7 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Positions Table */}
               <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
                   <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
@@ -335,23 +400,39 @@ export default function Home() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-800/50">
                       <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
-                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
-                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">P&L %</th>
-                        <th className="px-4 py-2 text-left">SL/TP</th><th className="px-4 py-2 text-left">Status</th>
+                        <th className="px-4 py-2 text-left">Symbol</th>
+                        <th className="px-4 py-2 text-left">Direction</th>
+                        <th className="px-4 py-2 text-left">Entry</th>
+                        <th className="px-4 py-2 text-left">Current</th>
+                        <th className="px-4 py-2 text-left">P&L</th>
+                        <th className="px-4 py-2 text-left">P&L %</th>
+                        <th className="px-4 py-2 text-left">SL/TP</th>
+                        <th className="px-4 py-2 text-left">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {positions.map(p => (
                         <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
                           <td className="px-4 py-3 font-medium">{p.symbol}</td>
-                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{p.direction}</span></td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {p.direction}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 font-mono">{p.entryPrice.toFixed(5)}</td>
                           <td className="px-4 py-3 font-mono text-blue-400">{p.currentPrice.toFixed(5)}</td>
-                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}</td>
-                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%</td>
-                          <td className="px-4 py-3 text-xs text-gray-500">{p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}</td>
-                          <td className="px-4 py-3">{p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}</td>
+                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            ${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}
+                          </td>
+                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-500">
+                            {p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -359,6 +440,7 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* News Feed */}
               <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div className="flex justify-between items-center border-b border-gray-800 px-4 py-3">
                   <h3 className="font-medium flex items-center gap-2"><Radar className="w-4 h-4 text-blue-400" /> Live AI News Feed</h3>
@@ -385,6 +467,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* Settings Tab */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -399,12 +482,20 @@ export default function Home() {
                     <span className="text-green-400">✓ Configured</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">MetaApi MT5:</span>
+                    <span className={mt5Connected ? "text-green-400" : "text-yellow-400"}>
+                      {mt5Connected ? "✓ Connected to Demo" : "⚠️ Not Connected"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Bot:</span>
                     <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Running" : "🟡 Stopped"}</span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Data Source:</span>
-                    <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Alpha Vantage (Live Forex)" : "Demo Mode"}</span>
+                    <span className={useMT5 ? "text-green-400" : (useLiveData ? "text-blue-400" : "text-yellow-400")}>
+                      {useMT5 ? "MT5 Demo Account" : (useLiveData ? "Alpha Vantage (Forex)" : "Demo Mode")}
+                    </span>
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
@@ -413,7 +504,8 @@ export default function Home() {
                     <li>Message your bot on Telegram (click Start)</li>
                     <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
                     <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram connection</li>
-                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
+                    <li>Click <span className="text-cyan-400">"Use MT5"</span> to connect to your MT5 demo account</li>
+                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch between Alpha Vantage and demo data</li>
                   </ol>
                 </div>
               </div>
@@ -423,4 +515,4 @@ export default function Home() {
       </main>
     </div>
   );
-        }
+      }
