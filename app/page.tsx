@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
+import { MetaApiBroker } from './lib/metaapi-broker';
 import TradingViewChart from './components/TradingViewChart';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
@@ -24,6 +25,7 @@ telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '77249614
 
 // ============ API INITIALIZATION ============
 const alphaVantage = new AlphaVantageAPI();
+const metaApiBroker = new MetaApiBroker();
 
 // ============ TYPES ============
 interface Position {
@@ -73,7 +75,10 @@ export default function Home() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
+  const [useMT5, setUseMT5] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [mt5Connected, setMt5Connected] = useState(false);
+  const [mt5AccountInfo, setMt5AccountInfo] = useState<any>(null);
   const [showChart, setShowChart] = useState(true);
   const [selectedSymbol, setSelectedSymbol] = useState('EURUSD');
   
@@ -125,6 +130,22 @@ export default function Home() {
   const avgTrade = totalTrades ? (tradeHistory.reduce((sum, t) => sum + t.pnl, 0) / totalTrades) : 0;
   const profitFactor = tradeHistory.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0) / Math.abs(tradeHistory.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0)) || 0;
 
+  // ============ MT5 CONNECTION ============
+  useEffect(() => {
+    if (botRunning && useMT5) {
+      const accountId = process.env.NEXT_PUBLIC_METAAPI_ACCOUNT_ID || 'c20cd5b54db7a38402208da1456127f';
+      metaApiBroker.connect(accountId).then((connected) => {
+        setMt5Connected(connected);
+        if (connected) {
+          metaApiBroker.getAccountInfo().then(setMt5AccountInfo);
+          toast.success('✅ Connected to MT5 Demo Account');
+        } else {
+          toast.error('❌ MT5 connection failed');
+        }
+      });
+    }
+  }, [botRunning, useMT5]);
+
   // Live price updates
   useEffect(() => {
     if (!botRunning) return;
@@ -137,7 +158,10 @@ export default function Home() {
         try {
           let price: number | null = null;
           
-          if (useLiveData) {
+          if (useMT5 && mt5Connected) {
+            const prices = await metaApiBroker.getPrices([symbol]);
+            price = prices[symbol] || null;
+          } else if (useLiveData) {
             price = await alphaVantage.getLivePrice(symbol);
           } else {
             price = 1.0892 + (Math.random() - 0.5) * 0.005;
@@ -167,7 +191,7 @@ export default function Home() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [botRunning, useLiveData]);
+  }, [botRunning, useLiveData, useMT5, mt5Connected]);
 
   // Generate mock news
   useEffect(() => {
@@ -280,14 +304,38 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${wsConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
                 {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {useLiveData ? 'Alpha Vantage' : 'Demo Mode'}
+                {useMT5 ? 'MT5 Live' : (useLiveData ? 'Alpha Vantage' : 'Demo Mode')}
               </div>
-              <button onClick={() => setUseLiveData(!useLiveData)} className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}>
-                {useLiveData ? '📡 Live' : '🎮 Demo'}
+              
+              <button 
+                onClick={() => {
+                  setUseMT5(false);
+                  setUseLiveData(!useLiveData);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useLiveData && !useMT5 ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useLiveData && !useMT5 ? '📡 Live' : '🎮 Demo'}
               </button>
+              
+              <button 
+                onClick={() => {
+                  setUseMT5(true);
+                  setUseLiveData(false);
+                }} 
+                className={`text-xs px-2 py-1 rounded ${useMT5 ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'}`}
+              >
+                {useMT5 ? '📈 MT5 Mode' : '🔌 Use MT5'}
+              </button>
+              
               <button onClick={() => setShowChart(!showChart)} className={`text-xs px-2 py-1 rounded ${showChart ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'}`}>
                 📊 Chart
               </button>
+              
+              {mt5Connected && useMT5 && (
+                <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                  <span>MT5: ${mt5AccountInfo?.balance?.toFixed(2)}</span>
+                </div>
+              )}
             </div>
             
             <div className="flex gap-2">
@@ -309,7 +357,7 @@ export default function Home() {
           {/* DASHBOARD TAB */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              {/* Chart Toggle */}
+              {/* Chart Section */}
               {showChart && (
                 <div className="mb-4">
                   <div className="flex gap-2 mb-3">
@@ -552,12 +600,20 @@ export default function Home() {
                     <span className="text-green-400">✓ Configured</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">MetaApi MT5:</span>
+                    <span className={mt5Connected ? "text-green-400" : "text-yellow-400"}>
+                      {mt5Connected ? "✓ Connected to Demo" : "⚠️ Not Connected"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Bot:</span>
                     <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Running" : "🟡 Stopped"}</span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Data Source:</span>
-                    <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Alpha Vantage (Live Forex)" : "Demo Mode"}</span>
+                    <span className={useMT5 ? "text-green-400" : (useLiveData ? "text-blue-400" : "text-yellow-400")}>
+                      {useMT5 ? "MT5 Demo Account" : (useLiveData ? "Alpha Vantage (Live Forex)" : "Demo Mode")}
+                    </span>
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
@@ -566,7 +622,8 @@ export default function Home() {
                     <li>Message your bot on Telegram (click Start)</li>
                     <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
                     <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram connection</li>
-                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
+                    <li>Click <span className="text-cyan-400">"Use MT5"</span> to connect to your MT5 demo account</li>
+                    <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch between Alpha Vantage and demo data</li>
                     <li>Check <span className="text-cyan-400">"Analytics"</span> tab to track performance</li>
                   </ol>
                 </div>
@@ -577,4 +634,4 @@ export default function Home() {
       </main>
     </div>
   );
-        }
+                                    }
