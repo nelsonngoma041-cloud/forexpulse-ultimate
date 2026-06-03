@@ -6,16 +6,16 @@ import {
   Bot, MessageCircle, Play, Pause, Activity, Settings, 
   TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
   DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download,
-  Database, BarChart3, History, Clock
+  BarChart3, History, Calendar, TrendingUp as TrendingUpIcon,
+  Award, Star, AlertCircle, PieChart
 } from "lucide-react";
 import { 
   AreaChart, Area, BarChart, Bar, 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, PieChart, Pie, Legend
+  LineChart, Line, PieChart as RePieChart, Pie, Legend
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
-import { supabase, getPerformanceMetrics, getTradeHistory, getRecentSignals, saveTrade, saveSignal } from './lib/supabase';
 import TradingViewChart from './components/TradingViewChart';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
@@ -50,11 +50,14 @@ interface NewsItem {
   source: string;
 }
 
-interface DbMetrics {
-  totalPnL: number;
-  winRate: number;
-  totalTrades: number;
-  closedTrades: number;
+interface TradeHistory {
+  id: string;
+  symbol: string;
+  action: string;
+  entryPrice: number;
+  exitPrice: number;
+  pnl: number;
+  entryTime: string;
 }
 
 const calculatePnL = (position: Position, currentPrice: number): number => {
@@ -71,12 +74,25 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
-  const [showChart, setShowChart] = useState(false);
+  const [showChart, setShowChart] = useState(true);
+  const [selectedSymbol, setSelectedSymbol] = useState('EURUSD');
   
-  // Database state
-  const [dbMetrics, setDbMetrics] = useState<DbMetrics>({ totalPnL: 0, winRate: 0, totalTrades: 0, closedTrades: 0 });
-  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
-  const [recentSignals, setRecentSignals] = useState<any[]>([]);
+  // Performance analytics state
+  const [performanceData, setPerformanceData] = useState([
+    { day: 'Mon', pnl: 120, trades: 3 },
+    { day: 'Tue', pnl: -80, trades: 2 },
+    { day: 'Wed', pnl: 200, trades: 4 },
+    { day: 'Thu', pnl: 150, trades: 3 },
+    { day: 'Fri', pnl: -50, trades: 1 },
+    { day: 'Sat', pnl: 300, trades: 2 },
+    { day: 'Sun', pnl: 100, trades: 1 },
+  ]);
+  
+  const [tradeHistory, setTradeHistory] = useState<TradeHistory[]>([
+    { id: '1', symbol: 'EUR/USD', action: 'BUY', entryPrice: 1.0850, exitPrice: 1.0920, pnl: 70, entryTime: new Date().toISOString() },
+    { id: '2', symbol: 'GBP/USD', action: 'BUY', entryPrice: 1.2670, exitPrice: 1.2750, pnl: 80, entryTime: new Date().toISOString() },
+    { id: '3', symbol: 'USD/JPY', action: 'SELL', entryPrice: 157.20, exitPrice: 156.50, pnl: 70, entryTime: new Date().toISOString() },
+  ]);
   
   const [positions, setPositions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
@@ -96,34 +112,18 @@ export default function Home() {
     { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
     { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
     { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
-  ]);
-  
-  const [pnlData] = useState([
-    { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
-    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
+    { time: '12:30', equity: 10450 }, { time: '13:00', equity: 10500 },
   ]);
 
-  // Load database metrics
-  useEffect(() => {
-    const fetchDbData = async () => {
-      try {
-        const metrics = await getPerformanceMetrics();
-        setDbMetrics(metrics);
-        
-        const history = await getTradeHistory(20);
-        setTradeHistory(history);
-        
-        const signals = await getRecentSignals(10);
-        setRecentSignals(signals);
-      } catch (error) {
-        console.error('Error fetching DB data:', error);
-      }
-    };
-    
-    fetchDbData();
-    const interval = setInterval(fetchDbData, 60000);
-    return () => clearInterval(interval);
-  }, []);
+  // Calculate analytics
+  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
+  const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
+  const frozenCount = positions.filter(p => p.frozen).length;
+  const totalTrades = tradeHistory.length;
+  const bestTrade = Math.max(...tradeHistory.map(t => t.pnl), 0);
+  const worstTrade = Math.min(...tradeHistory.map(t => t.pnl), 0);
+  const avgTrade = totalTrades ? (tradeHistory.reduce((sum, t) => sum + t.pnl, 0) / totalTrades) : 0;
+  const profitFactor = tradeHistory.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0) / Math.abs(tradeHistory.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0)) || 0;
 
   // Live price updates
   useEffect(() => {
@@ -195,9 +195,6 @@ export default function Home() {
       };
       
       setNewsFeed(prev => [newSignal, ...prev.slice(0, 19)]);
-      
-      // Save signal to database
-      saveSignal(newSignal.currency, newSignal.sentiment === 'hawkish' ? 'BUY' : 'SELL', newSignal.confidence, newSignal.headline).catch(console.error);
     }, 20000);
     
     return () => clearInterval(interval);
@@ -236,7 +233,7 @@ export default function Home() {
   };
 
   const exportData = () => {
-    const data = { positions, newsFeed, dbMetrics, exportDate: new Date().toISOString() };
+    const data = { positions, newsFeed, tradeHistory, performanceData, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -246,10 +243,6 @@ export default function Home() {
     URL.revokeObjectURL(url);
     toast.success('Data exported');
   };
-
-  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
-  const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
-  const frozenCount = positions.filter(p => p.frozen).length;
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
@@ -263,10 +256,10 @@ export default function Home() {
           </button>
         </div>
         <nav className="p-2">
-          {['dashboard', 'tradingview', 'history', 'settings'].map(tab => (
+          {['dashboard', 'analytics', 'history', 'settings'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
-              {tab === 'tradingview' && <BarChart3 className="w-4 h-4" />}
+              {tab === 'analytics' && <BarChart3 className="w-4 h-4" />}
               {tab === 'history' && <History className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize">{tab}</span>}
@@ -295,10 +288,6 @@ export default function Home() {
               <button onClick={() => setShowChart(!showChart)} className={`text-xs px-2 py-1 rounded ${showChart ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'}`}>
                 📊 Chart
               </button>
-              <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
-                <Database className="w-3 h-3" />
-                <span>DB: {dbMetrics.totalTrades} trades</span>
-              </div>
             </div>
             
             <div className="flex gap-2">
@@ -317,9 +306,28 @@ export default function Home() {
         </header>
 
         <div className="p-6">
-          {/* Dashboard Tab */}
+          {/* DASHBOARD TAB */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
+              {/* Chart Toggle */}
+              {showChart && (
+                <div className="mb-4">
+                  <div className="flex gap-2 mb-3">
+                    {['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD'].map(sym => (
+                      <button
+                        key={sym}
+                        onClick={() => setSelectedSymbol(sym)}
+                        className={`px-3 py-1 rounded text-xs ${selectedSymbol === sym ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-800 text-gray-400'}`}
+                      >
+                        {sym}
+                      </button>
+                    ))}
+                  </div>
+                  <TradingViewChart symbol={selectedSymbol} interval="60" theme="dark" />
+                </div>
+              )}
+
+              {/* KPI Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Total P&L</div>
@@ -344,48 +352,26 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">DB Total P&L</div>
-                  <div className={`text-xl font-bold ${dbMetrics.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ${dbMetrics.totalPnL.toFixed(0)}
-                  </div>
+                  <div className="text-xs text-gray-400">Profit Factor</div>
+                  <div className="text-2xl font-bold text-emerald-400">{profitFactor.toFixed(2)}</div>
                 </div>
               </div>
 
-              {showChart && (
-                <div className="mb-6">
-                  <TradingViewChart symbol="EURUSD" interval="60" theme="dark" />
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <AreaChart data={equityData}>
-                      <CartesianGrid stroke="#1f2937" />
-                      <XAxis dataKey="time" stroke="#6b7280" fontSize={11} />
-                      <YAxis stroke="#6b7280" fontSize={11} />
-                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
-                      <Area type="monotone" dataKey="equity" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <h3 className="text-sm text-gray-400 mb-4">Daily P&L</h3>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <BarChart data={pnlData}>
-                      <CartesianGrid stroke="#1f2937" />
-                      <XAxis dataKey="date" stroke="#6b7280" fontSize={11} />
-                      <YAxis stroke="#6b7280" fontSize={11} />
-                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
-                      <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
-                        {pnlData.map((entry, idx) => <Cell key={idx} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+              {/* Equity Curve */}
+              <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
+                <ResponsiveContainer width="100%" height={250}>
+                  <AreaChart data={equityData}>
+                    <CartesianGrid stroke="#1f2937" />
+                    <XAxis dataKey="time" stroke="#6b7280" fontSize={11} />
+                    <YAxis stroke="#6b7280" fontSize={11} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                    <Area type="monotone" dataKey="equity" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
 
+              {/* Positions Table */}
               <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
                   <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
@@ -419,6 +405,7 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* News Feed */}
               <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
                 <div className="flex justify-between items-center border-b border-gray-800 px-4 py-3">
                   <h3 className="font-medium flex items-center gap-2"><Radar className="w-4 h-4 text-blue-400" /> Live AI News Feed</h3>
@@ -445,99 +432,112 @@ export default function Home() {
             </div>
           )}
 
-          {/* TradingView Tab */}
-          {activeTab === 'tradingview' && (
+          {/* ANALYTICS TAB */}
+          {activeTab === 'analytics' && (
             <div className="space-y-6">
-              <TradingViewChart symbol="EURUSD" interval="60" theme="dark" />
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
-                  <div className="text-emerald-400 text-2xl">📈</div>
-                  <div className="text-sm text-gray-400 mt-1">RSI (14)</div>
-                  <div className="text-xl font-bold">52.3</div>
-                  <div className="text-xs text-gray-500">Neutral</div>
+                  <Award className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">${totalPnL.toFixed(0)}</div>
+                  <div className="text-xs text-gray-400">Total Profit</div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
-                  <div className="text-blue-400 text-2xl">📊</div>
-                  <div className="text-sm text-gray-400 mt-1">MACD</div>
-                  <div className="text-xl font-bold">Bullish</div>
-                  <div className="text-xs text-gray-500">Signal line cross</div>
+                  <Star className="w-8 h-8 text-yellow-400 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{winRate.toFixed(0)}%</div>
+                  <div className="text-xs text-gray-400">Win Rate</div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
-                  <div className="text-purple-400 text-2xl">🎯</div>
-                  <div className="text-sm text-gray-400 mt-1">Bollinger Bands</div>
-                  <div className="text-xl font-bold">Middle Band</div>
-                  <div className="text-xs text-gray-500">Price at average</div>
+                  <TrendingUpIcon className="w-8 h-8 text-blue-400 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{profitFactor.toFixed(2)}</div>
+                  <div className="text-xs text-gray-400">Profit Factor</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
+                  <Activity className="w-8 h-8 text-purple-400 mx-auto mb-2" />
+                  <div className="text-2xl font-bold">{totalTrades}</div>
+                  <div className="text-xs text-gray-400">Total Trades</div>
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                <h3 className="text-sm text-gray-400 mb-4">Daily P&L Performance</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={performanceData}>
+                    <CartesianGrid stroke="#1f2937" />
+                    <XAxis dataKey="day" stroke="#6b7280" fontSize={11} />
+                    <YAxis stroke="#6b7280" fontSize={11} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                    <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                      {performanceData.map((entry, idx) => (
+                        <Cell key={idx} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-3">Best Trade</h3>
+                  <div className="text-2xl font-bold text-emerald-400">+${bestTrade}</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-3">Worst Trade</h3>
+                  <div className="text-2xl font-bold text-red-400">${worstTrade}</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-3">Average Trade</h3>
+                  <div className={`text-2xl font-bold ${avgTrade >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${avgTrade.toFixed(0)}</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+                  <h3 className="text-sm text-gray-400 mb-3">Expectancy</h3>
+                  <div className="text-2xl font-bold text-blue-400">${(avgTrade * winRate / 100).toFixed(0)}</div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* History Tab */}
+          {/* HISTORY TAB */}
           {activeTab === 'history' && (
-            <div className="space-y-6">
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
-                <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><Database className="w-5 h-5 text-emerald-400" /> Trade History</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Total Trades</div>
-                    <div className="text-2xl font-bold text-blue-400">{dbMetrics.totalTrades}</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Closed Trades</div>
-                    <div className="text-2xl font-bold text-purple-400">{dbMetrics.closedTrades}</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Win Rate</div>
-                    <div className="text-2xl font-bold text-emerald-400">{dbMetrics.winRate.toFixed(1)}%</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Total P&L</div>
-                    <div className={`text-2xl font-bold ${dbMetrics.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      ${dbMetrics.totalPnL.toFixed(0)}
-                    </div>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-800/50">
-                      <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Symbol</th>
-                        <th className="px-4 py-2 text-left">Action</th>
-                        <th className="px-4 py-2 text-left">Entry</th>
-                        <th className="px-4 py-2 text-left">Exit</th>
-                        <th className="px-4 py-2 text-left">P&L</th>
-                        <th className="px-4 py-2 text-left">Time</th>
+            <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-800">
+                <h3 className="font-medium flex items-center gap-2"><History className="w-4 h-4 text-emerald-400" /> Trade History</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-800/50">
+                    <tr className="text-gray-400">
+                      <th className="px-4 py-2 text-left">Symbol</th>
+                      <th className="px-4 py-2 text-left">Action</th>
+                      <th className="px-4 py-2 text-left">Entry</th>
+                      <th className="px-4 py-2 text-left">Exit</th>
+                      <th className="px-4 py-2 text-left">P&L</th>
+                      <th className="px-4 py-2 text-left">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tradeHistory.map(trade => (
+                      <tr key={trade.id} className="border-b border-gray-800/50">
+                        <td className="px-4 py-3">{trade.symbol}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded px-2 py-0.5 text-xs ${trade.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {trade.action}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-mono">{trade.entryPrice.toFixed(5)}</td>
+                        <td className="px-4 py-3 font-mono">{trade.exitPrice.toFixed(5)}</td>
+                        <td className={`px-4 py-3 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ${trade.pnl >= 0 ? '+' : ''}{trade.pnl}
+                        </td>
+                        <td className="px-4 py-3 text-xs">{new Date(trade.entryTime).toLocaleString()}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {tradeHistory.length > 0 ? (
-                        tradeHistory.map((trade) => (
-                          <tr key={trade.id} className="border-b border-gray-800/50">
-                            <td className="px-4 py-3">{trade.symbol}</td>
-                            <td className="px-4 py-3">
-                              <span className={`rounded px-2 py-0.5 text-xs ${trade.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                                {trade.action}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 font-mono">{trade.entry_price?.toFixed(5)}</td>
-                            <td className="px-4 py-3 font-mono">{trade.exit_price?.toFixed(5) || '-'}</td>
-                            <td className={`px-4 py-3 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              ${trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(0) || 0}
-                            </td>
-                            <td className="px-4 py-3 text-xs">{new Date(trade.entry_time).toLocaleString()}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={6} className="text-center py-8 text-gray-500">No trade history yet. Start the bot to see trades!</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
-          {/* Settings Tab */}
+          {/* SETTINGS TAB */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -550,10 +550,6 @@ export default function Home() {
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Alpha Vantage API:</span>
                     <span className="text-green-400">✓ Configured</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Supabase Database:</span>
-                    <span className="text-green-400">✓ Connected</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Bot:</span>
@@ -571,7 +567,7 @@ export default function Home() {
                     <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
                     <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram connection</li>
                     <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
-                    <li>Check <span className="text-cyan-400">"History"</span> tab to see all trades saved to Supabase</li>
+                    <li>Check <span className="text-cyan-400">"Analytics"</span> tab to track performance</li>
                   </ol>
                 </div>
               </div>
@@ -581,4 +577,4 @@ export default function Home() {
       </main>
     </div>
   );
-            }
+        }
