@@ -1,11 +1,39 @@
 {
+  "name": "forexpulse-ultimate",
+  "version": "1.0.0",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "lint": "next lint",
     "mobile:build": "next build && npx cap copy",
     "mobile:ios": "npm run mobile:build && npx cap open ios",
     "mobile:android": "npm run mobile:build && npx cap open android",
     "mobile:sync": "npx cap sync"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.10.3",
+    "lucide-react": "^0.303.0",
+    "react-hot-toast": "^2.4.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "date-fns": "^3.0.6",
+    "axios": "^1.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.4",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.17",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6",
+    "typescript": "^5.3.3",
+    "@capacitor/core": "^5.7.0",
+    "@capacitor/cli": "^5.7.0",
+    "@capacitor/ios": "^5.7.0",
+    "@capacitor/android": "^5.7.0"
   }
 }
