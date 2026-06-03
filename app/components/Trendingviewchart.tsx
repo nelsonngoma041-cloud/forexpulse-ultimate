@@ -1,10 +1,9 @@
-// app/components/TradingViewChart.tsx
 "use client";
 
 import { useEffect, useRef } from 'react';
 
 interface TradingViewChartProps {
-  symbol: string;
+  symbol?: string;
   interval?: '1' | '5' | '15' | '30' | '60' | '240' | 'D' | 'W' | 'M';
   theme?: 'light' | 'dark';
 }
@@ -18,6 +17,11 @@ export default function TradingViewChart({
 
   useEffect(() => {
     if (!containerRef.current) return;
+
+    // Clear previous widget
+    while (containerRef.current.firstChild) {
+      containerRef.current.removeChild(containerRef.current.firstChild);
+    }
 
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/tv.js';
@@ -57,8 +61,11 @@ export default function TradingViewChart({
   }, [symbol, interval, theme]);
 
   return (
-    <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
-      <div ref={containerRef} className="w-full h-[500px]" />
+    <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-sm font-medium text-gray-400">TradingView Chart - {symbol}</h3>
+      </div>
+      <div ref={containerRef} className="w-full h-[500px] rounded-lg overflow-hidden" />
     </div>
   );
 }
