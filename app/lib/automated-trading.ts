@@ -52,6 +52,29 @@ export class AutomatedTradingBot {
     }
   }
 
+  // ========== CALCULATE STOP LOSS & TAKE PROFIT ==========
+  private calculateStopLossTakeProfit(action: 'BUY' | 'SELL', price: number, volatility: number = 0.01) {
+    if (action === 'BUY') {
+      return {
+        stopLoss: Number((price * (1 - volatility)).toFixed(5)),     // 1% below entry
+        takeProfit: Number((price * (1 + volatility * 2)).toFixed(5)) // 2% above entry
+      };
+    } else {
+      return {
+        stopLoss: Number((price * (1 + volatility)).toFixed(5)),     // 1% above entry
+        takeProfit: Number((price * (1 - volatility * 2)).toFixed(5)) // 2% below entry
+      };
+    }
+  }
+  // =========================================================
+
+  // Calculate volatility helper
+  private calculateVolatility(symbol: string): number {
+    // This can be enhanced with actual ATR calculation
+    // For now, returns default 1% volatility
+    return 0.01;
+  }
+
   // Update price and check for signals
   updatePrice(symbol: string, price: number, newsSentiment?: 'hawkish' | 'dovish') {
     // Update all strategies with new price
@@ -107,37 +130,45 @@ export class AutomatedTradingBot {
     if (signals.length === 0) return;
     
     // Combine signals from all strategies
-    const combinedSignal = this.combineSignals(signals);
+    const combinedSignal = this.combineSignals(signals, currentPrice);
     
     if (combinedSignal.action !== 'HOLD' && combinedSignal.confidence >= this.config.minConfidence) {
       await this.executeTrade(combinedSignal, currentPrice);
     }
   }
 
-  private combineSignals(signals: Signal[]): Signal {
+  private combineSignals(signals: Signal[], currentPrice: number): Signal {
     const buySignals = signals.filter(s => s.action === 'BUY');
     const sellSignals = signals.filter(s => s.action === 'SELL');
     
     const avgConfidence = signals.reduce((sum, s) => sum + s.confidence, 0) / signals.length;
     
     if (buySignals.length > sellSignals.length && avgConfidence > 0.6) {
+      // Calculate dynamic SL/TP for combined signal
+      const volatility = this.calculateVolatility(signals[0].symbol);
+      const { stopLoss, takeProfit } = this.calculateStopLossTakeProfit('BUY', currentPrice, volatility);
+      
       return {
         action: 'BUY',
         symbol: signals[0].symbol,
         confidence: avgConfidence,
         reason: `${buySignals.length}/${signals.length} strategies agree on BUY`,
-        stopLoss: currentPrice * 0.99,
-        takeProfit: currentPrice * 1.02,
+        stopLoss: stopLoss,
+        takeProfit: takeProfit,
         timestamp: new Date()
       };
     } else if (sellSignals.length > buySignals.length && avgConfidence > 0.6) {
+      // Calculate dynamic SL/TP for combined signal
+      const volatility = this.calculateVolatility(signals[0].symbol);
+      const { stopLoss, takeProfit } = this.calculateStopLossTakeProfit('SELL', currentPrice, volatility);
+      
       return {
         action: 'SELL',
         symbol: signals[0].symbol,
         confidence: avgConfidence,
         reason: `${sellSignals.length}/${signals.length} strategies agree on SELL`,
-        stopLoss: currentPrice * 1.01,
-        takeProfit: currentPrice * 0.98,
+        stopLoss: stopLoss,
+        takeProfit: takeProfit,
         timestamp: new Date()
       };
     }
@@ -147,9 +178,14 @@ export class AutomatedTradingBot {
 
   private async executeTrade(signal: Signal, currentPrice: number) {
     // Calculate position size based on risk
-    const accountSize = 10000; // This should come from your account
+    const accountSize = 10000;
     const riskAmount = accountSize * (this.config.riskPerTrade / 100);
-    const stopLossDistance = Math.abs(currentPrice - signal.stopLoss!);
+    
+    // Use the stop loss and take profit from the signal (already calculated)
+    const stopLoss = signal.stopLoss!;
+    const takeProfit = signal.takeProfit!;
+    
+    const stopLossDistance = Math.abs(currentPrice - stopLoss);
     const volume = riskAmount / (stopLossDistance * 10000);
     const finalVolume = Math.min(volume, this.config.maxPositionSize);
     
@@ -159,8 +195,8 @@ export class AutomatedTradingBot {
       action: signal.action,
       entryPrice: currentPrice,
       volume: finalVolume,
-      stopLoss: signal.stopLoss!,
-      takeProfit: signal.takeProfit!,
+      stopLoss: stopLoss,
+      takeProfit: takeProfit,
       entryTime: new Date(),
       pnl: 0
     };
@@ -180,7 +216,7 @@ export class AutomatedTradingBot {
       takeProfit: trade.takeProfit
     });
     
-    console.log(`📊 TRADE EXECUTED: ${trade.action} ${trade.symbol} at ${trade.entryPrice} | Confidence: ${(signal.confidence * 100).toFixed(0)}% | Reason: ${signal.reason}`);
+    console.log(`📊 TRADE EXECUTED: ${trade.action} ${trade.symbol} at ${trade.entryPrice} | SL: ${stopLoss} | TP: ${takeProfit} | Reason: ${signal.reason}`);
   }
 
   private updateActiveTrades(symbol: string, currentPrice: number) {
@@ -201,11 +237,11 @@ export class AutomatedTradingBot {
         } else {
           trade.pnl = (trade.entryPrice - currentPrice) * 10000 * trade.volume;
           
-          // Check take profit
+          // Check take profit (for SELL: price goes DOWN to hit TP)
           if (currentPrice <= trade.takeProfit) {
             this.closeTrade(trade, currentPrice, 'Take Profit');
           }
-          // Check stop loss
+          // Check stop loss (for SELL: price goes UP to hit SL)
           else if (currentPrice >= trade.stopLoss) {
             this.closeTrade(trade, currentPrice, 'Stop Loss');
           }
@@ -236,13 +272,13 @@ export class AutomatedTradingBot {
     this.dailyPnL = 0;
     this.dailyTrades = 0;
     console.log('🤖 Automated trading bot started');
-    this.telegramBot.sendAlert('Trading Bot', 'Bot has been activated and is monitoring markets', 'info');
+    this.telegramBot.sendAlert('Trading Bot', '🤖 Bot has been activated and is monitoring markets with RSI, MACD, MA, Bollinger, and News strategies', 'info');
   }
 
   stop(reason?: string) {
     this.isRunning = false;
     console.log(`🛑 Automated trading bot stopped${reason ? `: ${reason}` : ''}`);
-    this.telegramBot.sendAlert('Trading Bot', `Bot stopped${reason ? `: ${reason}` : ''}`, 'warning');
+    this.telegramBot.sendAlert('Trading Bot', `⏸️ Bot stopped${reason ? `: ${reason}` : ''}`, 'warning');
   }
 
   getStatus() {
