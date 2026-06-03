@@ -18,7 +18,6 @@ export default function TradingViewChart({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Clear previous widget
     while (containerRef.current.firstChild) {
       containerRef.current.removeChild(containerRef.current.firstChild);
     }
