@@ -2,25 +2,19 @@
 
 import { useEffect, useRef } from 'react';
 
-interface TradingViewChartProps {
-  symbol?: string;
-  interval?: '1' | '5' | '15' | '30' | '60' | '240' | 'D' | 'W' | 'M';
-  theme?: 'light' | 'dark';
-}
-
 export default function TradingViewChart({ 
   symbol = 'EURUSD', 
   interval = '60',
   theme = 'dark' 
-}: TradingViewChartProps) {
+}: { 
+  symbol?: string; 
+  interval?: string; 
+  theme?: string;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
-
-    while (containerRef.current.firstChild) {
-      containerRef.current.removeChild(containerRef.current.firstChild);
-    }
 
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/tv.js';
@@ -30,7 +24,7 @@ export default function TradingViewChart({
         new (window as any).TradingView.widget({
           container: containerRef.current,
           width: '100%',
-          height: 500,
+          height: 450,
           symbol: `FX:${symbol}`,
           interval: interval,
           timezone: 'Etc/UTC',
@@ -40,31 +34,16 @@ export default function TradingViewChart({
           toolbar_bg: '#1a1a2e',
           enable_publishing: false,
           allow_symbol_change: true,
-          details: true,
-          hotlist: true,
-          calendar: true,
-          studies: [
-            'MASimple@tv-basicstudies',
-            'RSI@tv-basicstudies',
-            'MACD@tv-basicstudies',
-            'BollingerBands@tv-basicstudies'
-          ]
+          studies: ['RSI@tv-basicstudies', 'MACD@tv-basicstudies']
         });
       }
     };
     document.head.appendChild(script);
-
-    return () => {
-      if (script.parentNode) script.parentNode.removeChild(script);
-    };
   }, [symbol, interval, theme]);
 
   return (
     <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-sm font-medium text-gray-400">TradingView Chart - {symbol}</h3>
-      </div>
-      <div ref={containerRef} className="w-full h-[500px] rounded-lg overflow-hidden" />
+      <div ref={containerRef} className="w-full h-[450px] rounded-lg overflow-hidden" />
     </div>
   );
 }
