@@ -6,21 +6,21 @@ export interface TradingConfig {
   enabled: boolean;
   symbols: string[];
   strategies: StrategyConfig[];
-  maxPositionSize: number;  // in lots
-  maxDailyLoss: number;      // in dollars
+  maxPositionSize: number;
+  maxDailyLoss: number;
   maxDailyTrades: number;
-  riskPerTrade: number;      // % of account
-  minConfidence: number;     // 0-1
+  riskPerTrade: number;
+  minConfidence: number;
   tradingHours: {
-    start: number;  // 0-23
-    end: number;    // 0-23
+    start: number;
+    end: number;
   };
 }
 
 export interface ActiveTrade {
   id: string;
   symbol: string;
-  action: 'BUY' | 'SELL';
+  action: 'BUY' | 'SELL';  // Only BUY or SELL, never HOLD
   entryPrice: number;
   volume: number;
   stopLoss: number;
@@ -42,7 +42,6 @@ export class AutomatedTradingBot {
     this.config = config;
     this.telegramBot = telegramBot;
     
-    // Initialize strategies for each symbol
     for (const symbol of config.symbols) {
       for (const strategyConfig of config.strategies) {
         const key = `${symbol}_${strategyConfig.type}`;
@@ -51,7 +50,6 @@ export class AutomatedTradingBot {
     }
   }
 
-  // ========== CALCULATE STOP LOSS & TAKE PROFIT ==========
   private calculateStopLossTakeProfit(action: 'BUY' | 'SELL', price: number, volatility: number = 0.01) {
     if (action === 'BUY') {
       return {
@@ -67,12 +65,10 @@ export class AutomatedTradingBot {
   }
 
   private calculateVolatility(symbol: string): number {
-    return 0.01; // 1% default volatility
+    return 0.01;
   }
 
-  // Update price and check for signals
   updatePrice(symbol: string, price: number, newsSentiment?: 'hawkish' | 'dovish') {
-    // Update all strategies with new price - FIXED iteration
     const strategyKeys = Array.from(this.strategies.keys());
     for (const key of strategyKeys) {
       const strategy = this.strategies.get(key);
@@ -81,12 +77,10 @@ export class AutomatedTradingBot {
       }
     }
     
-    // Check for trading signals
     if (this.isRunning && this.canTrade()) {
       this.checkForSignals(symbol, price, newsSentiment);
     }
     
-    // Update active trades P&L and check SL/TP
     this.updateActiveTrades(symbol, price);
   }
 
@@ -112,7 +106,6 @@ export class AutomatedTradingBot {
   private async checkForSignals(symbol: string, currentPrice: number, newsSentiment?: 'hawkish' | 'dovish') {
     const signals: Signal[] = [];
     
-    // Get signals from all strategies - FIXED iteration
     const strategyKeys = Array.from(this.strategies.keys());
     for (const key of strategyKeys) {
       if (key.startsWith(symbol)) {
@@ -130,6 +123,7 @@ export class AutomatedTradingBot {
     
     const combinedSignal = this.combineSignals(signals, currentPrice);
     
+    // CRITICAL FIX: Only execute if action is BUY or SELL (not HOLD)
     if (combinedSignal.action !== 'HOLD' && combinedSignal.confidence >= this.config.minConfidence) {
       await this.executeTrade(combinedSignal, currentPrice);
     }
@@ -173,6 +167,12 @@ export class AutomatedTradingBot {
   }
 
   private async executeTrade(signal: Signal, currentPrice: number) {
+    // Safety check: never execute a HOLD signal
+    if (signal.action === 'HOLD') {
+      console.log('Attempted to execute HOLD signal - skipping');
+      return;
+    }
+
     const accountSize = 10000;
     const riskAmount = accountSize * (this.config.riskPerTrade / 100);
     
@@ -186,7 +186,7 @@ export class AutomatedTradingBot {
     const trade: ActiveTrade = {
       id: `trade_${Date.now()}_${signal.symbol}`,
       symbol: signal.symbol,
-      action: signal.action,
+      action: signal.action as 'BUY' | 'SELL', // Type assertion since we checked it's not HOLD
       entryPrice: currentPrice,
       volume: finalVolume,
       stopLoss: stopLoss,
@@ -284,4 +284,4 @@ export class AutomatedTradingBot {
   getActiveTrades() {
     return this.activeTrades;
   }
-      }
+  }
