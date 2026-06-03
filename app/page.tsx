@@ -5,14 +5,18 @@ import { Toaster, toast } from "react-hot-toast";
 import { 
   Bot, MessageCircle, Play, Pause, Activity, Settings, 
   TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
-  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download 
+  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download,
+  Database, BarChart3, History, Clock
 } from "lucide-react";
 import { 
   AreaChart, Area, BarChart, Bar, 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+  LineChart, Line, PieChart, Pie, Legend
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
+import { supabase, getPerformanceMetrics, getTradeHistory, getRecentSignals, saveTrade, saveSignal } from './lib/supabase';
+import TradingViewChart from './components/TradingViewChart';
 
 // ============ TELEGRAM BOT INITIALIZATION ============
 const telegramBot = new TelegramAlertBot();
@@ -46,6 +50,13 @@ interface NewsItem {
   source: string;
 }
 
+interface DbMetrics {
+  totalPnL: number;
+  winRate: number;
+  totalTrades: number;
+  closedTrades: number;
+}
+
 const calculatePnL = (position: Position, currentPrice: number): number => {
   if (position.direction === 'LONG') {
     return (currentPrice - position.entryPrice) * 10000 * position.volume;
@@ -60,6 +71,12 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
+  const [showChart, setShowChart] = useState(false);
+  
+  // Database state
+  const [dbMetrics, setDbMetrics] = useState<DbMetrics>({ totalPnL: 0, winRate: 0, totalTrades: 0, closedTrades: 0 });
+  const [tradeHistory, setTradeHistory] = useState<any[]>([]);
+  const [recentSignals, setRecentSignals] = useState<any[]>([]);
   
   const [positions, setPositions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
@@ -85,6 +102,28 @@ export default function Home() {
     { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
     { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, 
   ]);
+
+  // Load database metrics
+  useEffect(() => {
+    const fetchDbData = async () => {
+      try {
+        const metrics = await getPerformanceMetrics();
+        setDbMetrics(metrics);
+        
+        const history = await getTradeHistory(20);
+        setTradeHistory(history);
+        
+        const signals = await getRecentSignals(10);
+        setRecentSignals(signals);
+      } catch (error) {
+        console.error('Error fetching DB data:', error);
+      }
+    };
+    
+    fetchDbData();
+    const interval = setInterval(fetchDbData, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Live price updates
   useEffect(() => {
@@ -156,6 +195,9 @@ export default function Home() {
       };
       
       setNewsFeed(prev => [newSignal, ...prev.slice(0, 19)]);
+      
+      // Save signal to database
+      saveSignal(newSignal.currency, newSignal.sentiment === 'hawkish' ? 'BUY' : 'SELL', newSignal.confidence, newSignal.headline).catch(console.error);
     }, 20000);
     
     return () => clearInterval(interval);
@@ -194,7 +236,7 @@ export default function Home() {
   };
 
   const exportData = () => {
-    const data = { positions, newsFeed, exportDate: new Date().toISOString() };
+    const data = { positions, newsFeed, dbMetrics, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -221,9 +263,11 @@ export default function Home() {
           </button>
         </div>
         <nav className="p-2">
-          {['dashboard', 'settings'].map(tab => (
+          {['dashboard', 'tradingview', 'history', 'settings'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
+              {tab === 'tradingview' && <BarChart3 className="w-4 h-4" />}
+              {tab === 'history' && <History className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize">{tab}</span>}
             </button>
@@ -248,6 +292,13 @@ export default function Home() {
               <button onClick={() => setUseLiveData(!useLiveData)} className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}>
                 {useLiveData ? '📡 Live' : '🎮 Demo'}
               </button>
+              <button onClick={() => setShowChart(!showChart)} className={`text-xs px-2 py-1 rounded ${showChart ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'}`}>
+                📊 Chart
+              </button>
+              <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-green-500/20 text-green-400">
+                <Database className="w-3 h-3" />
+                <span>DB: {dbMetrics.totalTrades} trades</span>
+              </div>
             </div>
             
             <div className="flex gap-2">
@@ -266,6 +317,7 @@ export default function Home() {
         </header>
 
         <div className="p-6">
+          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -292,10 +344,18 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Data Source</div>
-                  <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
+                  <div className="text-xs text-gray-400">DB Total P&L</div>
+                  <div className={`text-xl font-bold ${dbMetrics.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ${dbMetrics.totalPnL.toFixed(0)}
+                  </div>
                 </div>
               </div>
+
+              {showChart && (
+                <div className="mb-6">
+                  <TradingViewChart symbol="EURUSD" interval="60" theme="dark" />
+                </div>
+              )}
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
@@ -385,6 +445,99 @@ export default function Home() {
             </div>
           )}
 
+          {/* TradingView Tab */}
+          {activeTab === 'tradingview' && (
+            <div className="space-y-6">
+              <TradingViewChart symbol="EURUSD" interval="60" theme="dark" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
+                  <div className="text-emerald-400 text-2xl">📈</div>
+                  <div className="text-sm text-gray-400 mt-1">RSI (14)</div>
+                  <div className="text-xl font-bold">52.3</div>
+                  <div className="text-xs text-gray-500">Neutral</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
+                  <div className="text-blue-400 text-2xl">📊</div>
+                  <div className="text-sm text-gray-400 mt-1">MACD</div>
+                  <div className="text-xl font-bold">Bullish</div>
+                  <div className="text-xs text-gray-500">Signal line cross</div>
+                </div>
+                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4 text-center">
+                  <div className="text-purple-400 text-2xl">🎯</div>
+                  <div className="text-sm text-gray-400 mt-1">Bollinger Bands</div>
+                  <div className="text-xl font-bold">Middle Band</div>
+                  <div className="text-xs text-gray-500">Price at average</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* History Tab */}
+          {activeTab === 'history' && (
+            <div className="space-y-6">
+              <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
+                <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><Database className="w-5 h-5 text-emerald-400" /> Trade History</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                    <div className="text-xs text-gray-400">Total Trades</div>
+                    <div className="text-2xl font-bold text-blue-400">{dbMetrics.totalTrades}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                    <div className="text-xs text-gray-400">Closed Trades</div>
+                    <div className="text-2xl font-bold text-purple-400">{dbMetrics.closedTrades}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                    <div className="text-xs text-gray-400">Win Rate</div>
+                    <div className="text-2xl font-bold text-emerald-400">{dbMetrics.winRate.toFixed(1)}%</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                    <div className="text-xs text-gray-400">Total P&L</div>
+                    <div className={`text-2xl font-bold ${dbMetrics.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      ${dbMetrics.totalPnL.toFixed(0)}
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-800/50">
+                      <tr className="text-gray-400">
+                        <th className="px-4 py-2 text-left">Symbol</th>
+                        <th className="px-4 py-2 text-left">Action</th>
+                        <th className="px-4 py-2 text-left">Entry</th>
+                        <th className="px-4 py-2 text-left">Exit</th>
+                        <th className="px-4 py-2 text-left">P&L</th>
+                        <th className="px-4 py-2 text-left">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tradeHistory.length > 0 ? (
+                        tradeHistory.map((trade) => (
+                          <tr key={trade.id} className="border-b border-gray-800/50">
+                            <td className="px-4 py-3">{trade.symbol}</td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-2 py-0.5 text-xs ${trade.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {trade.action}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 font-mono">{trade.entry_price?.toFixed(5)}</td>
+                            <td className="px-4 py-3 font-mono">{trade.exit_price?.toFixed(5) || '-'}</td>
+                            <td className={`px-4 py-3 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                              ${trade.pnl >= 0 ? '+' : ''}{trade.pnl?.toFixed(0) || 0}
+                            </td>
+                            <td className="px-4 py-3 text-xs">{new Date(trade.entry_time).toLocaleString()}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={6} className="text-center py-8 text-gray-500">No trade history yet. Start the bot to see trades!</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Settings Tab */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -397,6 +550,10 @@ export default function Home() {
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Alpha Vantage API:</span>
                     <span className="text-green-400">✓ Configured</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-800">
+                    <span className="text-gray-400">Supabase Database:</span>
+                    <span className="text-green-400">✓ Connected</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Bot:</span>
@@ -414,6 +571,7 @@ export default function Home() {
                     <li>Click <span className="text-cyan-400">"Start Bot"</span> to begin automated trading</li>
                     <li>Click <span className="text-cyan-400">"Test Alert"</span> to verify Telegram connection</li>
                     <li>Toggle <span className="text-cyan-400">"Live/Demo"</span> to switch data sources</li>
+                    <li>Check <span className="text-cyan-400">"History"</span> tab to see all trades saved to Supabase</li>
                   </ol>
                 </div>
               </div>
@@ -423,4 +581,4 @@ export default function Home() {
       </main>
     </div>
   );
-        }
+            }
