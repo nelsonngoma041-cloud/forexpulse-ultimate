@@ -24,12 +24,11 @@ export class TelegramAlertBot {
     this.botToken = token;
     this.chatId = chatId;
     this.baseUrl = `https://api.telegram.org/bot${this.botToken}`;
-    console.log('Telegram bot configured with token:', token.substring(0, 20) + '...');
   }
 
   async sendMessage(message: string): Promise<boolean> {
     if (!this.botToken || !this.chatId) {
-      console.error('Telegram not configured - missing token or chat ID');
+      console.error('Telegram not configured');
       return false;
     }
 
@@ -37,10 +36,9 @@ export class TelegramAlertBot {
       const url = `${this.baseUrl}/sendMessage?chat_id=${this.chatId}&text=${encodeURIComponent(message)}&parse_mode=HTML`;
       const response = await fetch(url);
       const result = await response.json();
-      console.log('Telegram API response:', result);
       return result.ok === true;
     } catch (error) {
-      console.error('Telegram send error:', error);
+      console.error('Telegram error:', error);
       return false;
     }
   }
@@ -63,7 +61,6 @@ ${trade.takeProfit ? `<b>🎯 Take Profit:</b> ${trade.takeProfit}` : ''}
 
 <i>🤖 Automated trading bot executing order...</i>
     `;
-    
     return this.sendMessage(message);
   }
 
