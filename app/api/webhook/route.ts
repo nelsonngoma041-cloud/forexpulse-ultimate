@@ -22,10 +22,6 @@ export async function POST(request: NextRequest) {
         await telegramBot.sendAlert(data.title, data.message, data.severity);
         break;
         
-      case 'daily_report':
-        await telegramBot.sendDailyReport(data);
-        break;
-        
       default:
         return NextResponse.json({ error: 'Unknown webhook type' }, { status: 400 });
     }
