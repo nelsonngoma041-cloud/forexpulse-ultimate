@@ -29,15 +29,17 @@ export class ProfessionalTradingEngine {
 
   private calculateRSI(prices: number[], period: number = 14): number {
     if (prices.length < period + 1) return 50;
+    
     let gains = 0, losses = 0;
-    const recentPrices = prices.slice(-period - 1);
-    for (let i = 1; i < recentPrices.length; i++) {
-      const change = recentPrices[i] - recentPrices[i-1];
+    for (let i = prices.length - period; i < prices.length; i++) {
+      const change = prices[i] - prices[i-1];
       if (change > 0) gains += change;
       else losses -= change;
     }
+    
     const avgGain = gains / period;
     const avgLoss = losses / period;
+    
     if (avgLoss === 0) return 100;
     const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
@@ -71,90 +73,133 @@ export class ProfessionalTradingEngine {
     return sum / period;
   }
 
+  private calculateATR(prices: number[], period: number = 14): number {
+    if (prices.length < period + 1) return 0;
+    let sum = 0;
+    for (let i = prices.length - period; i < prices.length; i++) {
+      sum += Math.abs(prices[i] - prices[i-1]);
+    }
+    return sum / period;
+  }
+
   analyze(symbol: string, currentPrice: number): TradeSignal {
     const prices = this.priceHistory.get(symbol) || [];
     if (prices.length < 50) {
       return {
         symbol, action: 'HOLD', confidence: 0, entryPrice: currentPrice,
         stopLoss: currentPrice * 0.99, takeProfit: currentPrice * 1.02,
-        reason: 'Collecting data...',
+        reason: 'Collecting enough data (need 50 candles)...',
         indicators: { rsi: 'N/A', macd: 'N/A', trend: 'N/A' }
       };
     }
 
     const rsi = this.calculateRSI(prices);
     const macd = this.calculateMACD(prices);
+    const ma20 = this.calculateMA(prices, 20);
     const ma50 = this.calculateMA(prices, 50);
-    const ma200 = this.calculateMA(prices, 200);
+    const atr = this.calculateATR(prices);
     
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
-    let reason = '';
+    let reasons: string[] = [];
     let rsiSignal = '';
     let macdSignal = '';
 
-    if (rsi < 30) {
-      rsiSignal = `Oversold (RSI: ${rsi.toFixed(1)})`;
-      confidence += 35;
+    // RSI Analysis
+    if (rsi < 25) {
+      rsiSignal = `Strongly Oversold (RSI: ${rsi.toFixed(1)}) - BUY Signal`;
+      confidence += 40;
       action = 'BUY';
-    } else if (rsi > 70) {
-      rsiSignal = `Overbought (RSI: ${rsi.toFixed(1)})`;
-      confidence += 35;
+      reasons.push('RSI strongly oversold');
+    } else if (rsi < 30) {
+      rsiSignal = `Oversold (RSI: ${rsi.toFixed(1)}) - Potential BUY`;
+      confidence += 30;
+      action = 'BUY';
+      reasons.push('RSI oversold');
+    } else if (rsi > 75) {
+      rsiSignal = `Strongly Overbought (RSI: ${rsi.toFixed(1)}) - SELL Signal`;
+      confidence += 40;
       action = 'SELL';
+      reasons.push('RSI strongly overbought');
+    } else if (rsi > 70) {
+      rsiSignal = `Overbought (RSI: ${rsi.toFixed(1)}) - Potential SELL`;
+      confidence += 30;
+      action = 'SELL';
+      reasons.push('RSI overbought');
     } else {
       rsiSignal = `Neutral (RSI: ${rsi.toFixed(1)})`;
     }
 
-    if (macd.histogram > 0 && macd.value > macd.signal) {
-      macdSignal = `Bullish crossover`;
+    // MACD Analysis
+    if (macd.histogram > 0.0002 && macd.value > macd.signal) {
+      macdSignal = `Strong Bullish Crossover - BUY`;
       confidence += 35;
       if (action === 'HOLD') action = 'BUY';
-    } else if (macd.histogram < 0 && macd.value < macd.signal) {
-      macdSignal = `Bearish crossover`;
+      reasons.push('MACD bullish crossover');
+    } else if (macd.histogram < -0.0002 && macd.value < macd.signal) {
+      macdSignal = `Strong Bearish Crossover - SELL`;
       confidence += 35;
       if (action === 'HOLD') action = 'SELL';
+      reasons.push('MACD bearish crossover');
+    } else if (macd.histogram > 0) {
+      macdSignal = `Bullish momentum building`;
+      confidence += 15;
+    } else if (macd.histogram < 0) {
+      macdSignal = `Bearish momentum building`;
+      confidence += 15;
     } else {
-      macdSignal = `No clear signal`;
+      macdSignal = `No clear MACD signal`;
     }
 
-    // Trend confirmation
-    if (currentPrice > ma50 && ma50 > ma200) {
-      if (action === 'BUY') confidence += 15;
-      reason = `${rsiSignal}. ${macdSignal}. Strong uptrend.`;
-    } else if (currentPrice < ma50 && ma50 < ma200) {
-      if (action === 'SELL') confidence += 15;
-      reason = `${rsiSignal}. ${macdSignal}. Strong downtrend.`;
-    } else {
-      reason = `${rsiSignal}. ${macdSignal}. Sideways market.`;
+    // Moving Average Trend
+    const priceVsMA20 = currentPrice > ma20 ? 'above' : 'below';
+    const maTrend = ma20 > ma50 ? 'uptrend' : 'downtrend';
+    
+    if (maTrend === 'uptrend' && priceVsMA20 === 'above') {
+      confidence += 20;
+      if (action === 'HOLD') action = 'BUY';
+      reasons.push(`Price in ${maTrend}`);
+    } else if (maTrend === 'downtrend' && priceVsMA20 === 'below') {
+      confidence += 20;
+      if (action === 'HOLD') action = 'SELL';
+      reasons.push(`Price in ${maTrend}`);
     }
 
-    if (action === 'BUY' && confidence >= 50) {
-      return {
-        symbol, action: 'BUY', confidence: Math.min(confidence, 95),
-        entryPrice: currentPrice,
-        stopLoss: currentPrice * 0.99,
-        takeProfit: currentPrice * 1.02,
-        reason,
-        indicators: { rsi: rsiSignal, macd: macdSignal, trend: 'Bullish' }
-      };
-    } else if (action === 'SELL' && confidence >= 50) {
-      return {
-        symbol, action: 'SELL', confidence: Math.min(confidence, 95),
-        entryPrice: currentPrice,
-        stopLoss: currentPrice * 1.01,
-        takeProfit: currentPrice * 0.98,
-        reason,
-        indicators: { rsi: rsiSignal, macd: macdSignal, trend: 'Bearish' }
-      };
+    // Dynamic Stop Loss and Take Profit based on ATR
+    const stopLossPercent = Math.max(0.005, atr / currentPrice * 1.5);
+    const takeProfitPercent = Math.max(0.01, atr / currentPrice * 2.5);
+    
+    let stopLoss = currentPrice;
+    let takeProfit = currentPrice;
+    
+    if (action === 'BUY') {
+      stopLoss = currentPrice * (1 - stopLossPercent);
+      takeProfit = currentPrice * (1 + takeProfitPercent);
+    } else if (action === 'SELL') {
+      stopLoss = currentPrice * (1 + stopLossPercent);
+      takeProfit = currentPrice * (1 - takeProfitPercent);
     }
+
+    const finalAction = confidence >= 50 ? action : 'HOLD';
+    const finalConfidence = Math.min(confidence, 95);
+    
+    const reasonText = reasons.length > 0 
+      ? `${reasons.join(', ')}. ${rsiSignal}. ${macdSignal}.`
+      : `${rsiSignal}. ${macdSignal}. No strong signals.`;
 
     return {
-      symbol, action: 'HOLD', confidence,
+      symbol, 
+      action: finalAction, 
+      confidence: finalConfidence,
       entryPrice: currentPrice,
-      stopLoss: currentPrice * 0.99,
-      takeProfit: currentPrice * 1.02,
-      reason,
-      indicators: { rsi: rsiSignal, macd: macdSignal, trend: 'Neutral' }
+      stopLoss,
+      takeProfit,
+      reason: reasonText,
+      indicators: { 
+        rsi: rsiSignal, 
+        macd: macdSignal, 
+        trend: `${maTrend} (MA20: ${ma20.toFixed(5)}, MA50: ${ma50.toFixed(5)})` 
+      }
     };
   }
 }
