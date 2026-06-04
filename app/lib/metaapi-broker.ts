@@ -1,4 +1,6 @@
 // app/lib/metaapi-broker.ts
+import MetaApi from 'metaapi.cloud-sdk';
+
 export interface MT5Order {
   symbol: string;
   action: 'BUY' | 'SELL';
@@ -8,57 +10,51 @@ export interface MT5Order {
   comment?: string;
 }
 
-export interface MT5Position {
-  ticket: number;
-  symbol: string;
-  action: 'BUY' | 'SELL';
-  volume: number;
-  openPrice: number;
-  currentPrice: number;
-  profit: number;
-  stopLoss?: number;
-  takeProfit?: number;
-}
-
 export class MetaApiBroker {
+  private api: any;
+  private account: any;
   private connected: boolean = false;
   private accountInfo: any = null;
-  private positions: MT5Position[] = [];
-  private orderHistory: any[] = [];
-  private mt5Login: string = '';
-  private mt5Server: string = '';
+  private token: string;
+  private accountId: string;
 
   constructor() {
-    // Initialize
+    this.token = process.env.NEXT_PUBLIC_METAAPI_TOKEN || '';
+    this.accountId = process.env.NEXT_PUBLIC_METAAPI_ACCOUNT_ID || '';
+    this.api = new MetaApi(this.token);
   }
 
   async connect(login: string, password: string, server: string) {
     try {
-      console.log('🔌 Connecting to MT5 account...');
-      console.log(`   Login: ${login}`);
-      console.log(`   Server: ${server}`);
+      console.log('🔌 Connecting to MetaApi MT5 account...');
       
-      this.mt5Login = login;
-      this.mt5Server = server;
+      // Get the account
+      this.account = await this.api.metatraderAccountApi.getAccount(this.accountId);
       
-      // Simulate connection delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Deploy the account (start the MT5 terminal in cloud)
+      await this.account.deploy();
+      
+      // Wait for connection
+      await this.account.waitConnected();
       
       this.connected = true;
+      
+      // Get account info
+      const info = await this.account.getAccountInformation();
       this.accountInfo = {
-        login: login,
-        server: server,
-        balance: 10000,
-        equity: 10000,
-        margin: 0,
-        freeMargin: 10000,
-        profit: 0,
-        currency: 'USD',
-        leverage: 100
+        balance: info.balance,
+        equity: info.equity,
+        margin: info.margin,
+        freeMargin: info.freeMargin,
+        profit: info.profit,
+        currency: info.currency,
+        leverage: info.leverage
       };
       
       console.log('✅ Connected to MT5 successfully!');
+      console.log(`   Balance: $${this.accountInfo.balance}`);
       return true;
+      
     } catch (error) {
       console.error('❌ MT5 connection failed:', error);
       return false;
@@ -67,146 +63,110 @@ export class MetaApiBroker {
 
   async getAccountInfo() {
     if (!this.connected) return null;
-    // Update equity based on open positions
-    let totalProfit = 0;
-    for (const pos of this.positions) {
-      totalProfit += pos.profit;
+    try {
+      const info = await this.account.getAccountInformation();
+      return {
+        balance: info.balance,
+        equity: info.equity,
+        margin: info.margin,
+        freeMargin: info.freeMargin,
+        profit: info.profit,
+        currency: info.currency
+      };
+    } catch (error) {
+      return this.accountInfo;
     }
-    return {
-      ...this.accountInfo,
-      equity: this.accountInfo.balance + totalProfit,
-      profit: totalProfit,
-      freeMargin: this.accountInfo.balance + totalProfit
-    };
   }
 
   async getPrices(symbols: string[]) {
-    // Return realistic mock prices that fluctuate
-    const prices: Record<string, number> = {};
-    const basePrices: Record<string, number> = {
-      'EUR/USD': 1.0892,
-      'GBP/USD': 1.2715,
-      'USD/JPY': 157.85,
-      'AUD/USD': 0.6645,
-      'USD/CAD': 1.3715
-    };
-    
-    for (const symbol of symbols) {
-      // Add small random movement
-      const change = (Math.random() - 0.5) * 0.0005;
-      prices[symbol] = basePrices[symbol] + change;
+    if (!this.connected) return {};
+    try {
+      // Convert symbols to MT5 format (EURUSD instead of EUR/USD)
+      const mt5Symbols = symbols.map(s => s.replace('/', ''));
+      const rates = await this.account.getRates(mt5Symbols);
+      
+      const prices: Record<string, number> = {};
+      for (const rate of rates) {
+        prices[rate.symbol.replace('', '/')] = (rate.bid + rate.ask) / 2;
+      }
+      return prices;
+    } catch (error) {
+      console.error('Error fetching prices:', error);
+      return {};
     }
-    return prices;
   }
 
   async placeOrder(order: MT5Order) {
     if (!this.connected) {
-      console.log('❌ MT5 not connected');
       return { success: false, error: 'MT5 not connected' };
     }
 
-    console.log(`📊 MT5 ORDER: ${order.action} ${order.symbol} ${order.volume} lots`);
-    if (order.stopLoss) console.log(`   Stop Loss: ${order.stopLoss}`);
-    if (order.takeProfit) console.log(`   Take Profit: ${order.takeProfit}`);
-    
-    // Get current price
-    const prices = await this.getPrices([order.symbol]);
-    const currentPrice = prices[order.symbol] || 1.0892;
-    
-    // Create position
-    const newPosition: MT5Position = {
-      ticket: Date.now(),
-      symbol: order.symbol,
-      action: order.action,
-      volume: order.volume,
-      openPrice: currentPrice,
-      currentPrice: currentPrice,
-      profit: 0,
-      stopLoss: order.stopLoss,
-      takeProfit: order.takeProfit
-    };
-    
-    this.positions.push(newPosition);
-    
-    // Record in history
-    this.orderHistory.push({
-      ...order,
-      ticket: newPosition.ticket,
-      openPrice: currentPrice,
-      time: new Date().toISOString()
-    });
-    
-    // Update account balance (simulate margin used)
-    const marginUsed = order.volume * 1000;
-    this.accountInfo.margin += marginUsed;
-    this.accountInfo.freeMargin -= marginUsed;
-    
-    console.log(`✅ ORDER EXECUTED on MT5: ${order.action} ${order.symbol} at ${currentPrice}`);
-    
-    return { 
-      success: true, 
-      orderId: newPosition.ticket.toString(), 
-      filledPrice: currentPrice 
-    };
+    try {
+      // Convert symbol to MT5 format (EURUSD instead of EUR/USD)
+      const mt5Symbol = order.symbol.replace('/', '');
+      
+      const tradeOrder = {
+        symbol: mt5Symbol,
+        type: order.action === 'BUY' ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL',
+        volume: order.volume,
+        stopLoss: order.stopLoss,
+        takeProfit: order.takeProfit,
+        comment: order.comment || 'ForexPulse Bot'
+      };
+      
+      const result = await this.account.trade(tradeOrder);
+      
+      console.log(`✅ ORDER EXECUTED: ${order.action} ${order.symbol} at ${result.price}`);
+      
+      return { 
+        success: true, 
+        orderId: result.orderId, 
+        filledPrice: result.price 
+      };
+      
+    } catch (error) {
+      console.error('Order placement error:', error);
+      return { success: false, error: String(error) };
+    }
   }
 
   async getOpenPositions() {
-    // Update profits for open positions
-    const prices = await this.getPrices(this.positions.map(p => p.symbol));
-    
-    for (const pos of this.positions) {
-      const currentPrice = prices[pos.symbol] || pos.currentPrice;
-      pos.currentPrice = currentPrice;
-      
-      if (pos.action === 'BUY') {
-        pos.profit = (currentPrice - pos.openPrice) * 100000 * pos.volume;
-      } else {
-        pos.profit = (pos.openPrice - currentPrice) * 100000 * pos.volume;
-      }
-      
-      // Check stop loss
-      if (pos.stopLoss) {
-        if (pos.action === 'BUY' && currentPrice <= pos.stopLoss) {
-          await this.closePosition(pos.ticket, 'Stop Loss');
-        } else if (pos.action === 'SELL' && currentPrice >= pos.stopLoss) {
-          await this.closePosition(pos.ticket, 'Stop Loss');
-        }
-      }
-      
-      // Check take profit
-      if (pos.takeProfit) {
-        if (pos.action === 'BUY' && currentPrice >= pos.takeProfit) {
-          await this.closePosition(pos.ticket, 'Take Profit');
-        } else if (pos.action === 'SELL' && currentPrice <= pos.takeProfit) {
-          await this.closePosition(pos.ticket, 'Take Profit');
-        }
-      }
+    if (!this.connected) return [];
+    try {
+      const positions = await this.account.getPositions();
+      return positions.map((pos: any) => ({
+        ticket: pos.id,
+        symbol: pos.symbol,
+        action: pos.type === 'ORDER_TYPE_BUY' ? 'BUY' : 'SELL',
+        volume: pos.volume,
+        openPrice: pos.openPrice,
+        currentPrice: pos.currentPrice,
+        profit: pos.unrealizedProfit,
+        stopLoss: pos.stopLoss,
+        takeProfit: pos.takeProfit
+      }));
+    } catch (error) {
+      console.error('Error getting positions:', error);
+      return [];
     }
-    
-    return this.positions;
   }
 
-  async closePosition(ticket: number, reason?: string) {
-    const index = this.positions.findIndex(p => p.ticket === ticket);
-    if (index !== -1) {
-      const position = this.positions[index];
-      console.log(`🔒 POSITION CLOSED: ${position.action} ${position.symbol} | Profit: $${position.profit.toFixed(2)} | Reason: ${reason || 'Manual'}`);
-      
-      // Update account balance with profit/loss
-      this.accountInfo.balance += position.profit;
-      this.accountInfo.margin -= position.volume * 1000;
-      this.accountInfo.freeMargin += position.volume * 1000;
-      
-      this.positions.splice(index, 1);
+  async closePosition(ticket: string) {
+    if (!this.connected) return { success: false };
+    try {
+      await this.account.closePosition(ticket);
+      console.log(`✅ Position closed: ${ticket}`);
       return { success: true };
+    } catch (error) {
+      console.error('Error closing position:', error);
+      return { success: false };
     }
-    return { success: false, error: 'Position not found' };
   }
 
   async closeAllPositions() {
-    const tickets = [...this.positions.map(p => p.ticket)];
-    for (const ticket of tickets) {
-      await this.closePosition(ticket, 'Bot stopped');
+    const positions = await this.getOpenPositions();
+    for (const pos of positions) {
+      await this.closePosition(pos.ticket);
     }
     return { success: true };
   }
@@ -217,12 +177,6 @@ export class MetaApiBroker {
 
   disconnect() {
     this.connected = false;
-    this.accountInfo = null;
-    this.positions = [];
     console.log('🔌 Disconnected from MT5');
-  }
-
-  getOrderHistory() {
-    return this.orderHistory;
   }
 }
