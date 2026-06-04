@@ -1,61 +1,50 @@
 // app/api/live-signals/route.ts
 import { NextResponse } from 'next/server';
-import { TelegramAlertBot, TradeAlert } from '@/app/lib/telegram-alerts';
+import { TelegramAlertBot } from '@/app/lib/telegram-alerts';
 import { tradingEngine } from '@/app/lib/trading-engine';
-import { AlphaVantageAPI } from '@/app/lib/broker-api';
 
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
-const alphaVantage = new AlphaVantageAPI();
-
 const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
-
 let isRunning = false;
 let intervalId: NodeJS.Timeout | null = null;
 
 async function analyzeAndSendSignals() {
-  console.log('🔍 Analyzing markets...');
+  console.log('📊 Analyzing markets with RSI, MACD, and MA...');
   
   for (const symbol of symbols) {
-    try {
-      // Get live price
-      const price = await alphaVantage.getLivePrice(symbol);
-      if (!price) continue;
+    // Simulate live prices (replace with real API later)
+    const mockPrice = symbol === 'EUR/USD' ? 1.0892 + (Math.random() - 0.5) * 0.003 :
+                      symbol === 'GBP/USD' ? 1.2715 + (Math.random() - 0.5) * 0.003 :
+                      symbol === 'USD/JPY' ? 157.85 + (Math.random() - 0.5) * 0.2 :
+                      symbol === 'AUD/USD' ? 0.6645 + (Math.random() - 0.5) * 0.002 : 1.3715 + (Math.random() - 0.5) * 0.002;
+    
+    tradingEngine.addPrice(symbol, mockPrice);
+    const signal = tradingEngine.analyze(symbol, mockPrice);
+    
+    if (signal.action !== 'HOLD') {
+      const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
+      const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
       
-      // Add to trading engine
-      tradingEngine.addPrice(symbol, price);
-      
-      // Get professional analysis
-      const signal = tradingEngine.analyze(symbol, price);
-      
-      if (signal.action !== 'HOLD') {
-        const tradeAlert: TradeAlert = {
-          symbol: signal.symbol,
-          action: signal.action,
-          price: signal.entryPrice,
-          confidence: signal.confidence / 100,
-          signalType: 'Professional Technical Analysis',
-          volume: 0.1,
-          stopLoss: signal.stopLoss,
-          takeProfit: signal.takeProfit
-        };
-        
-        await telegramBot.sendTradeAlert(tradeAlert);
-        console.log(`✅ SIGNAL: ${signal.action} ${signal.symbol} | Confidence: ${signal.confidence}% | ${signal.reason}`);
-      } else {
-        console.log(`⏸️ HOLD: ${symbol} | ${signal.reason}`);
-      }
-      
-    } catch (error) {
-      console.error(`Error analyzing ${symbol}:`, error);
+      await telegramBot.sendMessage(
+        `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
+        `*Symbol:* ${signal.symbol}\n` +
+        `*Action:* ${signal.action === 'BUY' ? 'BUY' : 'SELL'}\n` +
+        `*Entry:* ${signal.entryPrice.toFixed(5)}\n` +
+        `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
+        `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
+        `*Confidence:* ${signal.confidence}%\n\n` +
+        `📊 *Technical Analysis*\n` +
+        `• ${signal.indicators.rsi}\n` +
+        `• ${signal.indicators.macd}\n` +
+        `• Trend: ${signal.indicators.trend}\n\n` +
+        `💡 *Reason:* ${signal.reason}`
+      );
+      console.log(`✅ Signal sent: ${signal.action} ${signal.symbol} (${signal.confidence}%)`);
+    } else {
+      console.log(`⏸️ Hold: ${symbol} - ${signal.reason}`);
     }
-  }
-  
-  // Send market summary every 5 minutes
-  if (Math.floor(Date.now() / 60000) % 5 === 0) {
-    const summary = tradingEngine.getMarketSummary();
-    await telegramBot.sendMessage(`📊 *Market Summary*\n\n${summary}`);
   }
 }
 
@@ -78,7 +67,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, message: 'Trading bot stopped' });
   }
   
-  return NextResponse.json({ running: isRunning });
+  return NextResponse.json({ running: isRunning, message: isRunning ? 'Running' : 'Stopped' });
 }
 
 export async function GET() {
