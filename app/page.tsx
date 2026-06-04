@@ -2,118 +2,48 @@
 
 import { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
-import { Bot, MessageCircle, Play, Pause, Activity, Settings, Wifi, WifiOff, ChevronLeft, Download } from "lucide-react";
+import { Bot, MessageCircle, Play, Pause, Activity, Settings, Wifi, WifiOff, ChevronLeft, Download, Server } from "lucide-react";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 
 // ============ TELEGRAM BOT ============
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
-// Currency pairs with their current prices and signal logic
 const currencyPairs = [
-  { symbol: 'EUR/USD', basePrice: 1.0892, stopLossPips: 30, takeProfitPips: 60 },
-  { symbol: 'GBP/USD', basePrice: 1.2715, stopLossPips: 30, takeProfitPips: 60 },
-  { symbol: 'USD/JPY', basePrice: 157.85, stopLossPips: 30, takeProfitPips: 60 },
-  { symbol: 'AUD/USD', basePrice: 0.6645, stopLossPips: 30, takeProfitPips: 60 },
-  { symbol: 'USD/CAD', basePrice: 1.3715, stopLossPips: 30, takeProfitPips: 60 },
+  { symbol: 'EUR/USD', basePrice: 1.0892 },
+  { symbol: 'GBP/USD', basePrice: 1.2715 },
+  { symbol: 'USD/JPY', basePrice: 157.85 },
+  { symbol: 'AUD/USD', basePrice: 0.6645 },
+  { symbol: 'USD/CAD', basePrice: 1.3715 },
 ];
 
 export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [lastSignals, setLastSignals] = useState<{[key: string]: any}>({});
 
-  // Generate signals for all currencies and send to Telegram
+  // Check bot status on load
   useEffect(() => {
-    if (!botRunning) return;
-    
-    const interval = setInterval(() => {
-      // Loop through all currency pairs
-      currencyPairs.forEach(async (pair) => {
-        // Randomly decide BUY or SELL (50/50 chance)
-        const isBuy = Math.random() > 0.5;
-        const action = isBuy ? 'BUY' : 'SELL';
-        
-        // Calculate price with small random movement
-        const variation = (Math.random() - 0.5) * 0.005;
-        const price = pair.basePrice + variation;
-        
-        // Calculate Stop Loss and Take Profit based on pips
-        let stopLoss, takeProfit;
-        if (action === 'BUY') {
-          if (pair.symbol === 'USD/JPY') {
-            stopLoss = price - (pair.stopLossPips * 0.1);
-            takeProfit = price + (pair.takeProfitPips * 0.1);
-          } else {
-            stopLoss = price - (pair.stopLossPips * 0.0001);
-            takeProfit = price + (pair.takeProfitPips * 0.0001);
-          }
-        } else {
-          if (pair.symbol === 'USD/JPY') {
-            stopLoss = price + (pair.stopLossPips * 0.1);
-            takeProfit = price - (pair.takeProfitPips * 0.1);
-          } else {
-            stopLoss = price + (pair.stopLossPips * 0.0001);
-            takeProfit = price - (pair.takeProfitPips * 0.0001);
-          }
-        }
-        
-        // Generate random confidence between 65% and 95%
-        const confidence = 0.65 + (Math.random() * 0.3);
-        
-        // Generate random reason based on market conditions
-        const reasons = [
-          'RSI oversold conditions',
-          'MACD bullish crossover',
-          'Support level bounce',
-          'Moving average confirmation',
-          'Price broke resistance',
-          'Trend line breakout',
-          'Bullish divergence detected',
-          'Strong momentum signal'
-        ];
-        const reason = reasons[Math.floor(Math.random() * reasons.length)];
-        
-        const signal: TradeAlert = {
-          symbol: pair.symbol,
-          action: action,
-          price: price,
-          confidence: confidence,
-          signalType: 'AI Multi-Currency Analysis',
-          volume: 0.1,
-          stopLoss: stopLoss,
-          takeProfit: takeProfit
-        };
-        
-        // Send to Telegram
-        await telegramBot.sendTradeAlert(signal);
-        
-        // Update last signal for UI
-        setLastSignals(prev => ({
-          ...prev,
-          [pair.symbol]: { action, price, timestamp: new Date().toLocaleTimeString() }
-        }));
-        
-        console.log(`📊 Signal sent: ${action} ${pair.symbol} @ ${price.toFixed(5)}`);
-      });
-      
-      toast.success(`📊 Signals sent for all 5 currency pairs! Check Telegram.`);
-      
-    }, 60000); // Send signals every 60 seconds for all pairs
-    
-    return () => clearInterval(interval);
-  }, [botRunning]);
+    fetch('/api/signals')
+      .then(res => res.json())
+      .then(data => setBotRunning(data.running))
+      .catch(console.error);
+  }, []);
 
   const toggleBot = async () => {
-    if (!botRunning) {
-      setBotRunning(true);
-      await telegramBot.sendAlert('ForexPulse', '🤖 Multi-Currency Signal Bot Activated! You will receive signals for EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD every 60 seconds.', 'info');
-      toast.success('🤖 Multi-currency signal bot activated');
+    const action = botRunning ? 'stop' : 'start';
+    const response = await fetch('/api/signals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action })
+    });
+    const result = await response.json();
+    
+    if (result.success) {
+      setBotRunning(!botRunning);
+      toast.success(botRunning ? 'Signal bot stopped' : 'Signal bot started - running 24/7 on server');
     } else {
-      setBotRunning(false);
-      await telegramBot.sendAlert('ForexPulse', '⏸️ Signal bot paused', 'warning');
-      toast('⏸️ Bot paused');
+      toast.error('Failed to toggle bot');
     }
   };
 
@@ -137,26 +67,25 @@ export default function Home() {
     }
   };
 
-  const sendManualSignalForPair = async (symbol: string, action: 'BUY' | 'SELL', price: number) => {
-    const pair = currencyPairs.find(p => p.symbol === symbol);
-    if (!pair) return;
-    
+  const sendManualSignal = async (symbol: string, action: 'BUY' | 'SELL', price: number) => {
+    const isJpy = symbol === 'USD/JPY';
     let stopLoss, takeProfit;
+    
     if (action === 'BUY') {
-      if (symbol === 'USD/JPY') {
-        stopLoss = price - (pair.stopLossPips * 0.1);
-        takeProfit = price + (pair.takeProfitPips * 0.1);
+      if (isJpy) {
+        stopLoss = price - 3.0;
+        takeProfit = price + 6.0;
       } else {
-        stopLoss = price - (pair.stopLossPips * 0.0001);
-        takeProfit = price + (pair.takeProfitPips * 0.0001);
+        stopLoss = price - 0.0030;
+        takeProfit = price + 0.0060;
       }
     } else {
-      if (symbol === 'USD/JPY') {
-        stopLoss = price + (pair.stopLossPips * 0.1);
-        takeProfit = price - (pair.takeProfitPips * 0.1);
+      if (isJpy) {
+        stopLoss = price + 3.0;
+        takeProfit = price - 6.0;
       } else {
-        stopLoss = price + (pair.stopLossPips * 0.0001);
-        takeProfit = price - (pair.takeProfitPips * 0.0001);
+        stopLoss = price + 0.0030;
+        takeProfit = price - 0.0060;
       }
     }
     
@@ -179,7 +108,6 @@ export default function Home() {
     <div className="min-h-screen bg-gray-950 text-gray-200">
       <Toaster position="top-right" />
       
-      {/* Sidebar */}
       <aside className={`fixed left-0 top-0 h-full transition-all duration-300 bg-gray-950 border-r border-gray-800 z-40 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}>
         <div className="p-4 border-b border-gray-800 flex justify-between items-center">
           {!sidebarCollapsed && <span className="font-bold text-emerald-400 text-lg">ForexPulse</span>}
@@ -200,19 +128,18 @@ export default function Home() {
         <div className="absolute bottom-4 left-0 right-0 flex justify-center">
           <div className={`flex items-center gap-2 ${sidebarCollapsed && 'justify-center'}`}>
             <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
-            {!sidebarCollapsed && <span className="text-xs text-gray-400">{botRunning ? 'Active' : 'Inactive'}</span>}
+            {!sidebarCollapsed && <span className="text-xs text-gray-400">{botRunning ? 'Server Active' : 'Server Standby'}</span>}
           </div>
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className={`transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}>
         <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-500/20 text-emerald-400">
-                <Wifi className="w-3 h-3" />
-                5 Currency Pairs
+                <Server className="w-3 h-3" />
+                24/7 Server Mode
               </div>
             </div>
             
@@ -222,21 +149,26 @@ export default function Home() {
               </button>
               <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
                 {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                {botRunning ? 'Signals Active' : 'Start Signals'}
+                {botRunning ? 'Signals Active' : 'Start 24/7 Signals'}
               </button>
             </div>
           </div>
         </header>
 
         <div className="p-6">
-          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="text-center py-12">
               <Bot className="w-20 h-20 text-emerald-400 mx-auto mb-4" />
-              <h1 className="text-2xl font-bold mb-2">Multi-Currency Signal Bot</h1>
+              <h1 className="text-2xl font-bold mb-2">24/7 Forex Signal Bot</h1>
               <p className="text-gray-400 mb-6">
-                Get automated trading signals for 5 major currency pairs
+                Signals run on Vercel servers - they continue even after you close your browser!
               </p>
+              
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4 max-w-md mx-auto mb-8">
+                <p className="text-sm text-emerald-400">✓ Server runs 24/7</p>
+                <p className="text-sm text-emerald-400 mt-1">✓ Signals continue after closing browser</p>
+                <p className="text-sm text-emerald-400 mt-1">✓ Works while phone is locked</p>
+              </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
                 {currencyPairs.map((pair) => (
@@ -245,24 +177,15 @@ export default function Home() {
                     <div className="text-sm text-gray-500 mt-1">
                       Base: {pair.basePrice}
                     </div>
-                    {lastSignals[pair.symbol] && (
-                      <div className="mt-2 text-xs">
-                        <span className="text-gray-500">Last: </span>
-                        <span className={lastSignals[pair.symbol].action === 'BUY' ? 'text-green-400' : 'text-red-400'}>
-                          {lastSignals[pair.symbol].action}
-                        </span>
-                        <span className="text-gray-500 ml-2">@ {lastSignals[pair.symbol].price.toFixed(5)}</span>
-                      </div>
-                    )}
                     <div className="flex gap-2 mt-3">
                       <button 
-                        onClick={() => sendManualSignalForPair(pair.symbol, 'BUY', pair.basePrice)}
+                        onClick={() => sendManualSignal(pair.symbol, 'BUY', pair.basePrice)}
                         className="flex-1 bg-emerald-500/20 text-emerald-400 py-1 rounded text-sm hover:bg-emerald-500/30"
                       >
                         BUY
                       </button>
                       <button 
-                        onClick={() => sendManualSignalForPair(pair.symbol, 'SELL', pair.basePrice)}
+                        onClick={() => sendManualSignal(pair.symbol, 'SELL', pair.basePrice)}
                         className="flex-1 bg-red-500/20 text-red-400 py-1 rounded text-sm hover:bg-red-500/30"
                       >
                         SELL
@@ -272,27 +195,22 @@ export default function Home() {
                 ))}
               </div>
               
-              <div className="mt-8 p-4 bg-gray-900 rounded-lg border border-gray-800 max-w-2xl mx-auto">
-                <h3 className="text-emerald-400 font-medium mb-2">📊 Bot Status</h3>
+              <div className="mt-8 p-4 bg-gray-900 rounded-lg border border-gray-800 max-w-md mx-auto">
+                <h3 className="text-emerald-400 font-medium mb-2">📊 Server Status</h3>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Status:</span>
                   <span className={botRunning ? "text-green-400" : "text-yellow-400"}>
-                    {botRunning ? "🟢 Sending signals every 60 seconds" : "⚪ Click Start to begin"}
+                    {botRunning ? "🟢 Running 24/7" : "⚪ Click Start to begin"}
                   </span>
                 </div>
                 <div className="flex justify-between items-center mt-2">
-                  <span className="text-gray-400">Currency Pairs:</span>
-                  <span className="text-blue-400">5 Active</span>
-                </div>
-                <div className="flex justify-between items-center mt-2">
                   <span className="text-gray-400">Signal Frequency:</span>
-                  <span className="text-blue-400">Every 60 seconds (all pairs)</span>
+                  <span className="text-blue-400">Every 60 seconds</span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Signals Tab */}
           {activeTab === 'signals' && (
             <div className="max-w-4xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -310,13 +228,13 @@ export default function Home() {
                       </div>
                       <div className="flex gap-3">
                         <button 
-                          onClick={() => sendManualSignalForPair(pair.symbol, 'BUY', pair.basePrice)}
+                          onClick={() => sendManualSignal(pair.symbol, 'BUY', pair.basePrice)}
                           className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded-lg hover:bg-emerald-500/30 transition font-medium"
                         >
                           📈 BUY
                         </button>
                         <button 
-                          onClick={() => sendManualSignalForPair(pair.symbol, 'SELL', pair.basePrice)}
+                          onClick={() => sendManualSignal(pair.symbol, 'SELL', pair.basePrice)}
                           className="flex-1 bg-red-500/20 text-red-400 py-2 rounded-lg hover:bg-red-500/30 transition font-medium"
                         >
                           📉 SELL
@@ -329,7 +247,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Settings Tab */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -341,25 +258,25 @@ export default function Home() {
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Currency Pairs:</span>
-                    <span className="text-blue-400">EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD</span>
+                    <span className="text-blue-400">5 Major Pairs</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Signal Mode:</span>
-                    <span className="text-blue-400">Multi-Currency Auto + Manual</span>
+                    <span className="text-gray-400">Runtime:</span>
+                    <span className="text-blue-400">24/7 Server Mode</span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Bot Status:</span>
-                    <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Sending Signals" : "🟡 Standby"}</span>
+                    <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Running 24/7" : "🟡 Standby"}</span>
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
-                  <p className="text-sm text-gray-300">📌 How to use:</p>
+                  <p className="text-sm text-gray-300">📌 How it works:</p>
                   <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
-                    <li>Click <span className="text-cyan-400">"Start Signals"</span> to begin receiving automated signals for all 5 pairs</li>
-                    <li>Signals are sent every 60 seconds with BUY/SELL recommendations</li>
-                    <li>Each signal includes Entry Price, Stop Loss, and Take Profit</li>
-                    <li>Use the <span className="text-cyan-400">"Signals"</span> tab for manual signals</li>
-                    <li>Open your MT5 mobile app to execute trades manually</li>
+                    <li>Click <span className="text-cyan-400">"Start 24/7 Signals"</span> once</li>
+                    <li>The bot runs on Vercel servers - NOT your browser</li>
+                    <li>Close the browser, lock your phone - signals continue!</li>
+                    <li>Signals sent every 60 seconds for all 5 pairs</li>
+                    <li>Use Telegram to receive alerts anywhere</li>
                   </ol>
                 </div>
               </div>
@@ -369,4 +286,4 @@ export default function Home() {
       </main>
     </div>
   );
-          }
+}
