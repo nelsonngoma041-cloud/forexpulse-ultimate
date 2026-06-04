@@ -5,9 +5,7 @@ import { Toaster, toast } from "react-hot-toast";
 import { 
   Bot, MessageCircle, Play, Pause, Activity, Settings, 
   TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
-  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download,
-  BarChart3, History, TrendingUp as TrendingUpIcon,
-  Award, Star
+  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download
 } from "lucide-react";
 import { 
   AreaChart, Area, BarChart, Bar, 
@@ -15,7 +13,6 @@ import {
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
-import TradingViewChart from './components/TradingViewChart';
 
 // ============ TELEGRAM BOT ============
 const telegramBot = new TelegramAlertBot();
@@ -57,36 +54,12 @@ const calculatePnL = (position: Position, currentPrice: number): number => {
   }
 };
 
-// Sample signals for manual trading
-const generateTradeSignal = (
-  symbol: string, 
-  action: 'BUY' | 'SELL', 
-  price: number, 
-  reason: string,
-  stopLoss: number,
-  takeProfit: number
-): TradeAlert => {
-  return {
-    symbol,
-    action,
-    price,
-    confidence: 0.85,
-    signalType: 'Manual Trading Signal',
-    volume: 0.1,
-    stopLoss,
-    takeProfit
-  };
-};
-
 export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [useLiveData, setUseLiveData] = useState(true);
   const [wsConnected, setWsConnected] = useState(false);
-  const [showChart, setShowChart] = useState(true);
-  const [selectedSymbol, setSelectedSymbol] = useState('EURUSD');
-  const [lastSignal, setLastSignal] = useState<any>(null);
   
   const [positions, setPositions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
@@ -112,7 +85,7 @@ export default function Home() {
   const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
   const frozenCount = positions.filter(p => p.frozen).length;
 
-  // ============ LIVE PRICE UPDATES ============
+  // Live price updates
   useEffect(() => {
     if (!botRunning) return;
     
@@ -156,109 +129,44 @@ export default function Home() {
     };
   }, [botRunning, useLiveData]);
 
-  // ============ GENERATE TRADING SIGNALS ============
-  useEffect(() => {
-    if (!botRunning) return;
-    
-    const analyzeAndSendSignal = async () => {
-      // Get current prices
-      const eurPrice = positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892;
-      const gbpPrice = positions.find(p => p.symbol === 'GBP/USD')?.currentPrice || 1.2715;
-      
-      // Simple trading logic based on news sentiment
-      const latestNews = newsFeed[0];
-      
-      if (latestNews && latestNews.confidence > 0.7) {
-        let signal: TradeAlert | null = null;
-        
-        if (latestNews.currency === 'USD') {
-          if (latestNews.sentiment === 'hawkish') {
-            signal = generateTradeSignal(
-              'USD', 'BUY', eurPrice,
-              `USD Bullish Signal: ${latestNews.headline.substring(0, 50)}`,
-              eurPrice * 0.99,
-              eurPrice * 1.02
-            );
-          } else {
-            signal = generateTradeSignal(
-              'USD', 'SELL', eurPrice,
-              `USD Bearish Signal: ${latestNews.headline.substring(0, 50)}`,
-              eurPrice * 1.01,
-              eurPrice * 0.98
-            );
-          }
-        } else if (latestNews.currency === 'EUR') {
-          if (latestNews.sentiment === 'hawkish') {
-            signal = generateTradeSignal(
-              'EUR/USD', 'BUY', eurPrice,
-              `EUR Bullish Signal: ${latestNews.headline.substring(0, 50)}`,
-              eurPrice * 0.99,
-              eurPrice * 1.02
-            );
-          } else {
-            signal = generateTradeSignal(
-              'EUR/USD', 'SELL', eurPrice,
-              `EUR Bearish Signal: ${latestNews.headline.substring(0, 50)}`,
-              eurPrice * 1.01,
-              eurPrice * 0.98
-            );
-          }
-        }
-        
-        if (signal) {
-          await telegramBot.sendTradeAlert(signal);
-          setLastSignal(signal);
-          toast.success(`📊 Trade signal sent to Telegram! Check your phone.`);
-        }
-      }
-    };
-    
-    const interval = setInterval(analyzeAndSendSignal, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
-  }, [botRunning, newsFeed, positions]);
-
-  // ============ GENERATE MOCK NEWS ============
+  // Generate signals and send to Telegram
   useEffect(() => {
     if (!botRunning) return;
     
     const interval = setInterval(() => {
-      const headlines = [
-        `Fed signals rate change - market reaction expected`,
-        `ECB hawkish comments drive euro higher`,
-        `BOJ maintains policy, yen weakens`,
-        `Strong US jobs data boosts dollar`,
-        `Inflation report beats expectations`,
+      const signals = [
+        { symbol: 'EUR/USD', action: 'BUY', price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892, stopLoss: 1.0860, takeProfit: 1.0950 },
+        { symbol: 'GBP/USD', action: 'BUY', price: positions.find(p => p.symbol === 'GBP/USD')?.currentPrice || 1.2715, stopLoss: 1.2680, takeProfit: 1.2780 },
+        { symbol: 'USD/JPY', action: 'SELL', price: positions.find(p => p.symbol === 'USD/JPY')?.currentPrice || 157.85, stopLoss: 158.50, takeProfit: 156.50 },
       ];
       
-      const currencies = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD'];
-      const sentiment = Math.random() > 0.5 ? 'hawkish' : 'dovish';
-      const currency = currencies[Math.floor(Math.random() * currencies.length)];
+      const randomSignal = signals[Math.floor(Math.random() * signals.length)];
       
-      const newSignal: NewsItem = {
-        id: Date.now().toString(),
-        headline: headlines[Math.floor(Math.random() * headlines.length)],
-        currency: currency,
-        sentiment: sentiment,
-        confidence: 0.6 + Math.random() * 0.35,
-        timestamp: new Date(),
-        source: ['Reuters', 'Bloomberg', 'FT', 'WSJ'][Math.floor(Math.random() * 4)]
-      };
+      telegramBot.sendTradeAlert({
+        symbol: randomSignal.symbol,
+        action: randomSignal.action as 'BUY' | 'SELL',
+        price: randomSignal.price,
+        confidence: 0.75,
+        signalType: 'AI Market Analysis',
+        volume: 0.1,
+        stopLoss: randomSignal.stopLoss,
+        takeProfit: randomSignal.takeProfit
+      });
       
-      setNewsFeed(prev => [newSignal, ...prev.slice(0, 19)]);
-    }, 20000);
+      toast.success(`📊 Signal sent to Telegram: ${randomSignal.action} ${randomSignal.symbol}`);
+    }, 30000);
     
     return () => clearInterval(interval);
-  }, [botRunning]);
+  }, [botRunning, positions]);
 
-  // ============ BOT CONTROLS ============
   const toggleBot = async () => {
     if (!botRunning) {
       setBotRunning(true);
-      await telegramBot.sendAlert('Trading Bot', '🤖 Signal bot activated - sending trade alerts to Telegram', 'info');
+      await telegramBot.sendAlert('ForexPulse', '🤖 Signal bot activated - you will receive trade alerts on Telegram', 'info');
       toast.success('🤖 Signal bot activated');
     } else {
       setBotRunning(false);
-      await telegramBot.sendAlert('Trading Bot', '⏸️ Signal bot paused', 'warning');
+      await telegramBot.sendAlert('ForexPulse', '⏸️ Signal bot paused', 'warning');
       toast('⏸️ Bot paused');
     }
   };
@@ -277,24 +185,14 @@ export default function Home() {
         takeProfit: 1.0950
       };
       await telegramBot.sendTradeAlert(testTrade);
-      toast.success('✅ Alert sent to Telegram!', { id: 'test' });
+      toast.success('✅ Alert sent to Telegram! Check your phone.', { id: 'test' });
     } catch (error) {
       toast.error('Failed to send alert', { id: 'test' });
     }
   };
 
-  const sendManualSignal = async (symbol: string, action: 'BUY' | 'SELL') => {
-    const price = positions.find(p => p.symbol === symbol)?.currentPrice || 1.0892;
-    const stopLoss = action === 'BUY' ? price * 0.99 : price * 1.01;
-    const takeProfit = action === 'BUY' ? price * 1.02 : price * 0.98;
-    
-    const signal = generateTradeSignal(symbol, action, price, `Manual signal from dashboard`, stopLoss, takeProfit);
-    await telegramBot.sendTradeAlert(signal);
-    toast.success(`📊 ${action} signal for ${symbol} sent to Telegram!`);
-  };
-
   const exportData = () => {
-    const data = { positions, newsFeed, lastSignal, exportDate: new Date().toISOString() };
+    const data = { positions, newsFeed, exportDate: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -318,10 +216,9 @@ export default function Home() {
           </button>
         </div>
         <nav className="p-2">
-          {['dashboard', 'signals', 'settings'].map(tab => (
+          {['dashboard', 'settings'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2 rounded mb-1 transition-all ${activeTab === tab ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
-              {tab === 'signals' && <Target className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize">{tab}</span>}
             </button>
@@ -330,14 +227,13 @@ export default function Home() {
         <div className="absolute bottom-4 left-0 right-0 flex justify-center">
           <div className={`flex items-center gap-2 ${sidebarCollapsed && 'justify-center'}`}>
             <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
-            {!sidebarCollapsed && <span className="text-xs text-gray-400">{botRunning ? 'Bot Active' : 'Bot Inactive'}</span>}
+            {!sidebarCollapsed && <span className="text-xs text-gray-400">{botRunning ? 'Signal Active' : 'Inactive'}</span>}
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
       <main className={`transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}>
-        {/* Header */}
         <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
@@ -347,9 +243,6 @@ export default function Home() {
               </div>
               <button onClick={() => setUseLiveData(!useLiveData)} className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}>
                 {useLiveData ? '📡 Live' : '🎮 Demo'}
-              </button>
-              <button onClick={() => setShowChart(!showChart)} className={`text-xs px-2 py-1 rounded ${showChart ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-700 text-gray-400'}`}>
-                📊 Chart
               </button>
             </div>
             
@@ -362,33 +255,24 @@ export default function Home() {
               </button>
               <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
                 {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                {botRunning ? 'Bot Active' : 'Start Bot'}
+                {botRunning ? 'Signal Active' : 'Start Signals'}
               </button>
             </div>
           </div>
         </header>
 
         <div className="p-6">
-          {/* DASHBOARD TAB */}
+          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              {/* Chart Section */}
-              {showChart && (
-                <div>
-                  <div className="flex gap-2 mb-3">
-                    {['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD'].map(sym => (
-                      <button
-                        key={sym}
-                        onClick={() => setSelectedSymbol(sym)}
-                        className={`px-3 py-1 rounded text-xs ${selectedSymbol === sym ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-800 text-gray-400'}`}
-                      >
-                        {sym}
-                      </button>
-                    ))}
-                  </div>
-                  <TradingViewChart symbol={selectedSymbol} interval="60" theme="dark" />
-                </div>
-              )}
+              {/* Info Banner */}
+              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+                <h3 className="text-emerald-400 font-medium mb-2">📱 Manual Signal Mode</h3>
+                <p className="text-sm text-gray-300">
+                  Click <span className="text-emerald-400">"Start Signals"</span> to receive BUY/SELL alerts on Telegram. 
+                  Open your MT5 mobile app to execute trades manually.
+                </p>
+              </div>
 
               {/* KPI Cards */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -408,41 +292,15 @@ export default function Home() {
                   {frozenCount > 0 && <div className="text-xs text-yellow-500">{frozenCount} frozen</div>}
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Bot Status</div>
+                  <div className="text-xs text-gray-400">Signal Status</div>
                   <div className="flex items-center gap-2 mt-1">
                     <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
-                    <span className="text-sm">{botRunning ? 'Signal Mode' : 'Standby'}</span>
+                    <span className="text-sm">{botRunning ? 'Sending Signals' : 'Standby'}</span>
                   </div>
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Data Source</div>
                   <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
-                </div>
-              </div>
-
-              {/* Instructions Banner */}
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
-                <h3 className="text-blue-400 font-medium mb-2">📱 Manual Trading Mode</h3>
-                <p className="text-sm text-gray-300 mb-2">
-                  When you click "Start Bot", trade signals will be sent to your Telegram. 
-                  Open MT5 on your phone and execute trades manually.
-                </p>
-                <div className="flex gap-2 mt-3">
-                  <div className="bg-gray-800 rounded px-2 py-1 text-xs">
-                    1. Start Bot
-                  </div>
-                  <div className="text-gray-500">→</div>
-                  <div className="bg-gray-800 rounded px-2 py-1 text-xs">
-                    2. Get Signal on Telegram
-                  </div>
-                  <div className="text-gray-500">→</div>
-                  <div className="bg-gray-800 rounded px-2 py-1 text-xs">
-                    3. Open MT5 App
-                  </div>
-                  <div className="text-gray-500">→</div>
-                  <div className="bg-gray-800 rounded px-2 py-1 text-xs">
-                    4. Execute Trade
-                  </div>
                 </div>
               </div>
 
@@ -521,119 +379,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* SIGNALS TAB - Manual Trading */}
-          {activeTab === 'signals' && (
-            <div className="space-y-6">
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
-                <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Manual Trade Signals</h3>
-                <p className="text-sm text-gray-400 mb-4">
-                  Click any button below to send a trade signal to Telegram. Then execute the trade manually on your MT5 app.
-                </p>
-                
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="bg-gray-800/30 rounded-lg p-4">
-                    <h4 className="font-medium mb-3 text-center">EUR/USD</h4>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => sendManualSignal('EUR/USD', 'BUY')}
-                        className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded hover:bg-emerald-500/30"
-                      >
-                        BUY
-                      </button>
-                      <button 
-                        onClick={() => sendManualSignal('EUR/USD', 'SELL')}
-                        className="flex-1 bg-red-500/20 text-red-400 py-2 rounded hover:bg-red-500/30"
-                      >
-                        SELL
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500 text-center mt-2">
-                      Current: ${positions.find(p => p.symbol === 'EUR/USD')?.currentPrice.toFixed(5)}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-gray-800/30 rounded-lg p-4">
-                    <h4 className="font-medium mb-3 text-center">GBP/USD</h4>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => sendManualSignal('GBP/USD', 'BUY')}
-                        className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded hover:bg-emerald-500/30"
-                      >
-                        BUY
-                      </button>
-                      <button 
-                        onClick={() => sendManualSignal('GBP/USD', 'SELL')}
-                        className="flex-1 bg-red-500/20 text-red-400 py-2 rounded hover:bg-red-500/30"
-                      >
-                        SELL
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500 text-center mt-2">
-                      Current: ${positions.find(p => p.symbol === 'GBP/USD')?.currentPrice.toFixed(5)}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-gray-800/30 rounded-lg p-4">
-                    <h4 className="font-medium mb-3 text-center">USD/JPY</h4>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => sendManualSignal('USD/JPY', 'BUY')}
-                        className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded hover:bg-emerald-500/30"
-                      >
-                        BUY
-                      </button>
-                      <button 
-                        onClick={() => sendManualSignal('USD/JPY', 'SELL')}
-                        className="flex-1 bg-red-500/20 text-red-400 py-2 rounded hover:bg-red-500/30"
-                      >
-                        SELL
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500 text-center mt-2">
-                      Current: ${positions.find(p => p.symbol === 'USD/JPY')?.currentPrice.toFixed(2)}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-gray-800/30 rounded-lg p-4">
-                    <h4 className="font-medium mb-3 text-center">AUD/USD</h4>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => sendManualSignal('AUD/USD', 'BUY')}
-                        className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded hover:bg-emerald-500/30"
-                      >
-                        BUY
-                      </button>
-                      <button 
-                        onClick={() => sendManualSignal('AUD/USD', 'SELL')}
-                        className="flex-1 bg-red-500/20 text-red-400 py-2 rounded hover:bg-red-500/30"
-                      >
-                        SELL
-                      </button>
-                    </div>
-                    <div className="text-xs text-gray-500 text-center mt-2">
-                      Current: ${positions.find(p => p.symbol === 'AUD/USD')?.currentPrice.toFixed(5)}
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
-                  <p className="text-xs text-yellow-400">
-                    💡 Tip: Clicking these buttons sends signals to Telegram. Open your MT5 mobile app to execute the actual trade.
-                  </p>
-                </div>
-              </div>
-              
-              {lastSignal && (
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <h3 className="font-medium text-sm mb-2">Last Signal Sent</h3>
-                  <p className="text-emerald-400">{lastSignal.action} {lastSignal.symbol} @ {lastSignal.price}</p>
-                  <p className="text-xs text-gray-500 mt-1">Stop Loss: {lastSignal.stopLoss} | Take Profit: {lastSignal.takeProfit}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SETTINGS TAB */}
+          {/* Settings Tab */}
           {activeTab === 'settings' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -657,13 +403,13 @@ export default function Home() {
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
-                  <p className="text-sm text-gray-300">📌 How to use Manual Mode:</p>
+                  <p className="text-sm text-gray-300">📌 How to use:</p>
                   <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
-                    <li>Click <span className="text-cyan-400">"Start Bot"</span> to receive automatic trade signals</li>
-                    <li>Check your <span className="text-cyan-400">Telegram</span> for BUY/SELL signals with SL/TP</li>
+                    <li>Click <span className="text-cyan-400">"Start Signals"</span> to begin receiving alerts</li>
+                    <li>Check your <span className="text-cyan-400">Telegram</span> for trade signals</li>
+                    <li>Each signal includes: Symbol, Action, Entry, Stop Loss, Take Profit</li>
                     <li>Open your <span className="text-cyan-400">MT5 mobile app</span></li>
                     <li>Execute the trade manually using the signal details</li>
-                    <li>Or use the <span className="text-cyan-400">"Signals"</span> tab to send manual signals</li>
                   </ol>
                 </div>
               </div>
@@ -673,4 +419,4 @@ export default function Home() {
       </main>
     </div>
   );
-              }
+                  }
