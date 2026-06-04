@@ -2,162 +2,43 @@
 
 import { useState, useEffect } from "react";
 import { Toaster, toast } from "react-hot-toast";
-import { 
-  Bot, MessageCircle, Play, Pause, Activity, Settings, 
-  TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
-  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download
-} from "lucide-react";
-import { 
-  AreaChart, Area, BarChart, Bar, 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
-} from "recharts";
+import { Bot, MessageCircle, Play, Pause, Activity, Settings, Wifi, WifiOff, ChevronLeft, Download } from "lucide-react";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
-import { AlphaVantageAPI } from './lib/broker-api';
 
 // ============ TELEGRAM BOT ============
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
-// ============ API ============
-const alphaVantage = new AlphaVantageAPI();
-
-// ============ TYPES ============
-interface Position {
-  id: string;
-  symbol: string;
-  direction: 'LONG' | 'SHORT';
-  entryPrice: number;
-  currentPrice: number;
-  volume: number;
-  pnl: number;
-  pnlPercent: number;
-  stopLoss: number;
-  takeProfit: number;
-  frozen: boolean;
-}
-
-interface NewsItem {
-  id: string;
-  headline: string;
-  currency: string;
-  sentiment: 'hawkish' | 'dovish';
-  confidence: number;
-  timestamp: Date;
-  source: string;
-}
-
-const calculatePnL = (position: Position, currentPrice: number): number => {
-  if (position.direction === 'LONG') {
-    return (currentPrice - position.entryPrice) * 10000 * position.volume;
-  } else {
-    return (position.entryPrice - currentPrice) * 10000 * position.volume;
-  }
-};
-
 export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [useLiveData, setUseLiveData] = useState(true);
-  const [wsConnected, setWsConnected] = useState(false);
-  
-  const [positions, setPositions] = useState<Position[]>([
-    { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
-    { id: '2', symbol: 'GBP/USD', direction: 'LONG', entryPrice: 1.2670, currentPrice: 1.2715, volume: 0.1, pnl: 450, pnlPercent: 0.36, stopLoss: 1.2640, takeProfit: 1.2770, frozen: true },
-    { id: '3', symbol: 'USD/JPY', direction: 'SHORT', entryPrice: 157.20, currentPrice: 157.85, volume: 0.05, pnl: -325, pnlPercent: -0.21, stopLoss: 158.00, takeProfit: 156.00, frozen: false },
-    { id: '4', symbol: 'AUD/USD', direction: 'LONG', entryPrice: 0.6620, currentPrice: 0.6645, volume: 0.1, pnl: 250, pnlPercent: 0.38, stopLoss: 0.6590, takeProfit: 0.6680, frozen: false },
-    { id: '5', symbol: 'USD/CAD', direction: 'SHORT', entryPrice: 1.3740, currentPrice: 1.3715, volume: 0.1, pnl: 250, pnlPercent: 0.18, stopLoss: 1.3770, takeProfit: 1.3680, frozen: false },
-  ]);
-  
-  const [newsFeed, setNewsFeed] = useState<NewsItem[]>([
-    { id: '1', headline: 'Fed signals rate pause amid cooling inflation', currency: 'USD', sentiment: 'dovish', confidence: 0.85, timestamp: new Date(), source: 'Reuters' },
-    { id: '2', headline: "ECB's Lagarde hints at July hike", currency: 'EUR', sentiment: 'hawkish', confidence: 0.78, timestamp: new Date(), source: 'Bloomberg' },
-    { id: '3', headline: 'BoJ maintains ultra-loose policy', currency: 'JPY', sentiment: 'dovish', confidence: 0.92, timestamp: new Date(), source: 'Nikkei' },
-  ]);
-  
-  const [equityData] = useState([
-    { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
-    { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
-    { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
-  ]);
-
-  const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
-  const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
-  const frozenCount = positions.filter(p => p.frozen).length;
-
-  // Live price updates
-  useEffect(() => {
-    if (!botRunning) return;
-    
-    let isMounted = true;
-    
-    const fetchPrices = async () => {
-      const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
-      for (const symbol of symbols) {
-        try {
-          let price: number | null = null;
-          
-          if (useLiveData) {
-            price = await alphaVantage.getLivePrice(symbol);
-          } else {
-            price = 1.0892 + (Math.random() - 0.5) * 0.005;
-          }
-          
-          if (price && isMounted) {
-            setPositions(prev => prev.map(p => 
-              p.symbol === symbol ? { 
-                ...p, 
-                currentPrice: price, 
-                pnl: calculatePnL(p, price),
-                pnlPercent: (calculatePnL(p, price) / 10000) * 100
-              } : p
-            ));
-            setWsConnected(true);
-          }
-        } catch (error) {
-          console.error(`Error fetching price for ${symbol}:`, error);
-        }
-      }
-    };
-
-    fetchPrices();
-    const interval = setInterval(fetchPrices, 30000);
-    
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [botRunning, useLiveData]);
 
   // Generate signals and send to Telegram
   useEffect(() => {
     if (!botRunning) return;
     
     const interval = setInterval(() => {
-      const signals = [
-        { symbol: 'EUR/USD', action: 'BUY', price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892, stopLoss: 1.0860, takeProfit: 1.0950 },
-        { symbol: 'GBP/USD', action: 'BUY', price: positions.find(p => p.symbol === 'GBP/USD')?.currentPrice || 1.2715, stopLoss: 1.2680, takeProfit: 1.2780 },
-        { symbol: 'USD/JPY', action: 'SELL', price: positions.find(p => p.symbol === 'USD/JPY')?.currentPrice || 157.85, stopLoss: 158.50, takeProfit: 156.50 },
-      ];
-      
-      const randomSignal = signals[Math.floor(Math.random() * signals.length)];
+      const actions = ['BUY', 'SELL'];
+      const action = actions[Math.floor(Math.random() * actions.length)];
+      const price = action === 'BUY' ? 1.0892 + (Math.random() * 0.01) : 1.0892 - (Math.random() * 0.01);
       
       telegramBot.sendTradeAlert({
-        symbol: randomSignal.symbol,
-        action: randomSignal.action as 'BUY' | 'SELL',
-        price: randomSignal.price,
+        symbol: 'EUR/USD',
+        action: action as 'BUY' | 'SELL',
+        price: price,
         confidence: 0.75,
         signalType: 'AI Market Analysis',
         volume: 0.1,
-        stopLoss: randomSignal.stopLoss,
-        takeProfit: randomSignal.takeProfit
+        stopLoss: action === 'BUY' ? price * 0.99 : price * 1.01,
+        takeProfit: action === 'BUY' ? price * 1.02 : price * 0.98
       });
       
-      toast.success(`📊 Signal sent to Telegram: ${randomSignal.action} ${randomSignal.symbol}`);
+      toast.success(`📊 Signal sent: ${action} EUR/USD @ ${price.toFixed(5)}`);
     }, 30000);
     
     return () => clearInterval(interval);
-  }, [botRunning, positions]);
+  }, [botRunning]);
 
   const toggleBot = async () => {
     if (!botRunning) {
@@ -185,29 +66,17 @@ export default function Home() {
         takeProfit: 1.0950
       };
       await telegramBot.sendTradeAlert(testTrade);
-      toast.success('✅ Alert sent to Telegram! Check your phone.', { id: 'test' });
+      toast.success('✅ Alert sent to Telegram!', { id: 'test' });
     } catch (error) {
       toast.error('Failed to send alert', { id: 'test' });
     }
-  };
-
-  const exportData = () => {
-    const data = { positions, newsFeed, exportDate: new Date().toISOString() };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `forexpulse_export_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('Data exported');
   };
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-200">
       <Toaster position="top-right" />
       
-      {/* Sidebar */}
+      {/* Simple Sidebar */}
       <aside className={`fixed left-0 top-0 h-full transition-all duration-300 bg-gray-950 border-r border-gray-800 z-40 ${sidebarCollapsed ? 'w-16' : 'w-64'}`}>
         <div className="p-4 border-b border-gray-800 flex justify-between items-center">
           {!sidebarCollapsed && <span className="font-bold text-emerald-400 text-lg">ForexPulse</span>}
@@ -234,24 +103,19 @@ export default function Home() {
 
       {/* Main Content */}
       <main className={`transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-64'}`}>
+        {/* Header */}
         <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
-              <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${wsConnected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-                {useLiveData ? 'Alpha Vantage' : 'Demo Mode'}
+              <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-500/20 text-emerald-400">
+                <Wifi className="w-3 h-3" />
+                Ready
               </div>
-              <button onClick={() => setUseLiveData(!useLiveData)} className={`text-xs px-2 py-1 rounded ${useLiveData ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-700 text-gray-400'}`}>
-                {useLiveData ? '📡 Live' : '🎮 Demo'}
-              </button>
             </div>
             
             <div className="flex gap-2">
               <button onClick={sendTestAlert} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
                 <MessageCircle className="w-4 h-4" /> Test Alert
-              </button>
-              <button onClick={exportData} className="bg-gray-800 text-gray-400 hover:bg-gray-700 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
-                <Download className="w-4 h-4" /> Export
               </button>
               <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
                 {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
@@ -264,118 +128,39 @@ export default function Home() {
         <div className="p-6">
           {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Info Banner */}
-              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
-                <h3 className="text-emerald-400 font-medium mb-2">📱 Manual Signal Mode</h3>
-                <p className="text-sm text-gray-300">
-                  Click <span className="text-emerald-400">"Start Signals"</span> to receive BUY/SELL alerts on Telegram. 
-                  Open your MT5 mobile app to execute trades manually.
-                </p>
-              </div>
-
-              {/* KPI Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Total P&L</div>
-                  <div className={`text-2xl font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    ${totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(0)}
+            <div className="text-center py-20">
+              <Bot className="w-24 h-24 text-emerald-400 mx-auto mb-6" />
+              <h1 className="text-3xl font-bold mb-4">ForexPulse Signal Bot</h1>
+              <p className="text-gray-400 mb-6 max-w-md mx-auto">
+                Click <span className="text-emerald-400 font-medium">"Start Signals"</span> to receive automated trading signals on Telegram.
+              </p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto mt-8">
+                <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                  <div className="text-green-400 text-2xl mb-2">✓</div>
+                  <div className="font-medium">Telegram Bot</div>
+                  <div className="text-xs text-gray-500">Connected</div>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                  <div className={`text-2xl mb-2 ${botRunning ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {botRunning ? '●' : '○'}
                   </div>
-                </div>
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Win Rate</div>
-                  <div className="text-2xl font-bold text-purple-400">{winRate.toFixed(0)}%</div>
-                </div>
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Active Positions</div>
-                  <div className="text-2xl font-bold">{positions.length}</div>
-                  {frozenCount > 0 && <div className="text-xs text-yellow-500">{frozenCount} frozen</div>}
-                </div>
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Signal Status</div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
-                    <span className="text-sm">{botRunning ? 'Sending Signals' : 'Standby'}</span>
-                  </div>
-                </div>
-                <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Data Source</div>
-                  <div className="text-sm font-bold mt-1 text-blue-400">{useLiveData ? 'Alpha Vantage' : 'Demo'}</div>
+                  <div className="font-medium">Signal Status</div>
+                  <div className="text-xs text-gray-500">{botRunning ? 'Sending Signals' : 'Standby'}</div>
                 </div>
               </div>
-
-              {/* Equity Curve */}
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
-                <ResponsiveContainer width="100%" height={250}>
-                  <AreaChart data={equityData}>
-                    <CartesianGrid stroke="#1f2937" />
-                    <XAxis dataKey="time" stroke="#6b7280" fontSize={11} />
-                    <YAxis stroke="#6b7280" fontSize={11} />
-                    <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
-                    <Area type="monotone" dataKey="equity" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Positions Table */}
-              <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
-                  <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
-                  <span className="text-xs text-gray-500">Updates every 30 seconds</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-800/50">
-                      <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
-                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
-                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">P&L %</th>
-                        <th className="px-4 py-2 text-left">SL/TP</th><th className="px-4 py-2 text-left">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {positions.map(p => (
-                        <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                          <td className="px-4 py-3 font-medium">{p.symbol}</td>
-                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{p.direction}</span></td>
-                          <td className="px-4 py-3 font-mono">{p.entryPrice.toFixed(5)}</td>
-                          <td className="px-4 py-3 font-mono text-blue-400">{p.currentPrice.toFixed(5)}</td>
-                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}</td>
-                          <td className={`px-4 py-3 ${p.pnlPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{p.pnlPercent >= 0 ? '+' : ''}{p.pnlPercent.toFixed(2)}%</td>
-                          <td className="px-4 py-3 text-xs text-gray-500">{p.stopLoss.toFixed(4)}/{p.takeProfit.toFixed(4)}</td>
-                          <td className="px-4 py-3">{p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* News Feed */}
-              <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
-                <div className="flex justify-between items-center border-b border-gray-800 px-4 py-3">
-                  <h3 className="font-medium flex items-center gap-2"><Radar className="w-4 h-4 text-blue-400" /> Live AI News Feed</h3>
-                  <div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /><span className="text-xs text-emerald-400">Monitoring</span></div>
-                </div>
-                <div className="divide-y divide-gray-800 max-h-64 overflow-y-auto">
-                  {newsFeed.map(signal => (
-                    <div key={signal.id} className="p-3 hover:bg-gray-800/30">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-gray-800">{signal.currency}</span>
-                        <span className={`flex items-center gap-1 text-xs ${signal.sentiment === 'hawkish' ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {signal.sentiment === 'hawkish' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                          {signal.sentiment.toUpperCase()}
-                        </span>
-                        <span className="text-xs text-gray-600">{(signal.confidence * 100).toFixed(0)}% conf</span>
-                        <span className="text-xs text-gray-600">{signal.source}</span>
-                      </div>
-                      <p className="text-sm">{signal.headline}</p>
-                      <div className="text-xs text-gray-500 mt-1">{signal.timestamp.toLocaleTimeString()}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              
+              <button 
+                onClick={toggleBot} 
+                className={`mt-8 px-8 py-3 rounded-lg font-medium transition-all flex items-center gap-2 mx-auto ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}
+              >
+                {botRunning ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                {botRunning ? 'Stop Signals' : 'Start Signals'}
+              </button>
+              
+              <p className="text-xs text-gray-500 mt-6">
+                📱 Signals will be sent to your Telegram every 30 seconds when active.
+              </p>
             </div>
           )}
 
@@ -390,16 +175,12 @@ export default function Home() {
                     <span className="text-green-400">✓ Connected</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Alpha Vantage API:</span>
-                    <span className="text-green-400">✓ Configured</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-800">
                     <span className="text-gray-400">Trading Mode:</span>
                     <span className="text-blue-400">Manual Signal Mode</span>
                   </div>
                   <div className="flex justify-between py-2">
-                    <span className="text-gray-400">Data Source:</span>
-                    <span className={useLiveData ? "text-blue-400" : "text-yellow-400"}>{useLiveData ? "Alpha Vantage (Live Forex)" : "Demo Mode"}</span>
+                    <span className="text-gray-400">Bot Status:</span>
+                    <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Sending Signals" : "🟡 Standby"}</span>
                   </div>
                 </div>
                 <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
@@ -419,4 +200,4 @@ export default function Home() {
       </main>
     </div>
   );
-                  }
+}
