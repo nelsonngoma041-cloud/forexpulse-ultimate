@@ -5,14 +5,13 @@ import { Toaster, toast } from "react-hot-toast";
 import { 
   Bot, MessageCircle, Play, Pause, Activity, Settings, 
   TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
-  DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download,
-  BarChart3, TrendingUp as TrendingUpIcon, Award, Star, Zap
+  ChevronRight, ChevronLeft, Target, Download,
+  BarChart3, Award, Zap
 } from "lucide-react";
 import { 
   AreaChart, Area, BarChart, Bar, 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
 } from "recharts";
-import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
@@ -35,13 +34,29 @@ export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [useLiveData, setUseLiveData] = useState(true);
   
   const [positions] = useState<Position[]>([
     { id: '1', symbol: 'EUR/USD', direction: 'LONG', entryPrice: 1.0850, currentPrice: 1.0892, volume: 0.1, pnl: 420, pnlPercent: 0.39, stopLoss: 1.0820, takeProfit: 1.0950, frozen: false },
     { id: '2', symbol: 'GBP/USD', direction: 'LONG', entryPrice: 1.2670, currentPrice: 1.2715, volume: 0.1, pnl: 450, pnlPercent: 0.36, stopLoss: 1.2640, takeProfit: 1.2770, frozen: true },
     { id: '3', symbol: 'USD/JPY', direction: 'SHORT', entryPrice: 157.20, currentPrice: 157.85, volume: 0.05, pnl: -325, pnlPercent: -0.21, stopLoss: 158.00, takeProfit: 156.00, frozen: false },
   ]);
+
+  // Check bot status on load
+  useEffect(() => {
+    const checkBotStatus = async () => {
+      try {
+        const response = await fetch('/api/live-signals');
+        const data = await response.json();
+        setBotRunning(data.running);
+      } catch (error) {
+        console.error('Error checking bot status:', error);
+      }
+    };
+    
+    checkBotStatus();
+    const interval = setInterval(checkBotStatus, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
   const winRate = positions.length ? (positions.filter(p => p.pnl > 0).length / positions.length) * 100 : 0;
@@ -57,7 +72,7 @@ export default function Home() {
     
     if (result.success) {
       setBotRunning(!botRunning);
-      toast.success(botRunning ? 'Bot stopped' : 'Professional bot started - analyzing with RSI, MACD, MA');
+      toast.success(botRunning ? 'Bot stopped' : 'Professional bot started - analyzing markets');
     }
   };
 
@@ -71,6 +86,17 @@ export default function Home() {
       toast.success('Test signal sent to Telegram!');
     }
   };
+
+  const equityData = [
+    { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
+    { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
+    { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
+  ];
+
+  const pnlData = [
+    { date: 'Mon', pnl: 120 }, { date: 'Tue', pnl: -80 }, { date: 'Wed', pnl: 200 },
+    { date: 'Thu', pnl: 150 }, { date: 'Fri', pnl: -50 }, { date: 'Sat', pnl: 180 }, { date: 'Sun', pnl: 90 },
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950">
@@ -89,11 +115,9 @@ export default function Home() {
           </button>
         </div>
         <nav className="p-3">
-          {['dashboard', 'signals', 'analysis', 'settings'].map(tab => (
+          {['dashboard', 'settings'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 transition-all ${activeTab === tab ? 'bg-gradient-to-r from-emerald-500/20 to-blue-500/20 text-white border-l-2 border-emerald-400' : 'text-gray-400 hover:bg-gray-800/50'}`}>
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
-              {tab === 'signals' && <Target className="w-4 h-4" />}
-              {tab === 'analysis' && <BarChart3 className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize text-sm">{tab}</span>}
             </button>
@@ -129,7 +153,7 @@ export default function Home() {
             </div>
             
             <div className="flex gap-2">
-              <button onClick={sendTestAlert} className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-400 hover:from-cyan-500/30 hover:to-blue-500/30 px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-all">
+              <button onClick={sendTestAlert} className="bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-400 hover:from-cyan-500/30 px-4 py-2 rounded-lg flex items-center gap-2 text-sm transition-all">
                 <MessageCircle className="w-4 h-4" /> Test Signal
               </button>
               <button onClick={toggleBot} className={`px-5 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all ${botRunning ? 'bg-gradient-to-r from-red-500/20 to-orange-500/20 text-red-400' : 'bg-gradient-to-r from-emerald-500/20 to-green-500/20 text-emerald-400'}`}>
@@ -182,69 +206,85 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-                  <h3 className="font-medium mb-4">🤖 Bot Status</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Status</span>
-                      <span className={botRunning ? "text-emerald-400" : "text-yellow-400"}>{botRunning ? "🟢 Active - Analyzing Markets" : "⚪ Inactive"}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Analysis Method</span>
-                      <span className="text-blue-400">RSI + MACD + MA Crossover</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Currency Pairs</span>
-                      <span className="text-blue-400">5 Major Pairs</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Signal Frequency</span>
-                      <span className="text-blue-400">Every 60 seconds</span>
-                    </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <div className="text-xs text-gray-400">Total P&L</div>
+                  <div className={`text-2xl font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ${totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(0)}
                   </div>
                 </div>
-
-                <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-                  <h3 className="font-medium mb-4">📊 What We Analyze</h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
-                      <span className="text-sm">Relative Strength Index (RSI) - Oversold/Overbought</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-blue-400"></div>
-                      <span className="text-sm">MACD - Trend Direction & Momentum</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-purple-400"></div>
-                      <span className="text-sm">50 & 200 Moving Averages - Trend Confirmation</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
-                      <span className="text-sm">Support & Resistance Levels</span>
-                    </div>
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <div className="text-xs text-gray-400">Win Rate</div>
+                  <div className="text-2xl font-bold text-purple-400">{winRate.toFixed(0)}%</div>
+                </div>
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <div className="text-xs text-gray-400">Bot Status</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
+                    <span className="text-sm">{botRunning ? 'Active' : 'Standby'}</span>
                   </div>
+                </div>
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <div className="text-xs text-gray-400">Data Source</div>
+                  <div className="text-sm font-bold mt-1 text-blue-400">Twelve Data (Live)</div>
                 </div>
               </div>
-            </div>
-          )}
 
-          {activeTab === 'analysis' && (
-            <div className="bg-gray-900 rounded-2xl p-8 border border-gray-800">
-              <h2 className="text-xl font-bold mb-4">Technical Indicators Explained</h2>
-              <div className="space-y-4">
-                <div className="p-4 bg-gray-800/30 rounded-xl">
-                  <h3 className="font-medium text-emerald-400 mb-2">📈 RSI (Relative Strength Index)</h3>
-                  <p className="text-sm text-gray-400">Measures momentum on a scale of 0-100. Below 30 = Oversold (Buy signal). Above 70 = Overbought (Sell signal).</p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <h3 className="text-sm text-gray-400 mb-4">Equity Curve</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <AreaChart data={equityData}>
+                      <CartesianGrid stroke="#1f2937" />
+                      <XAxis dataKey="time" stroke="#6b7280" fontSize={11} />
+                      <YAxis stroke="#6b7280" fontSize={11} />
+                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                      <Area type="monotone" dataKey="equity" stroke="#10b981" fill="#10b981" fillOpacity={0.1} />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
-                <div className="p-4 bg-gray-800/30 rounded-xl">
-                  <h3 className="font-medium text-blue-400 mb-2">📊 MACD</h3>
-                  <p className="text-sm text-gray-400">Shows trend direction and momentum. Bullish crossover when MACD crosses above signal line.</p>
+                <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+                  <h3 className="text-sm text-gray-400 mb-4">Daily P&L</h3>
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={pnlData}>
+                      <CartesianGrid stroke="#1f2937" />
+                      <XAxis dataKey="date" stroke="#6b7280" fontSize={11} />
+                      <YAxis stroke="#6b7280" fontSize={11} />
+                      <Tooltip contentStyle={{ backgroundColor: '#1f2937', border: 'none' }} />
+                      <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                        {pnlData.map((entry, idx) => <Cell key={idx} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-                <div className="p-4 bg-gray-800/30 rounded-xl">
-                  <h3 className="font-medium text-purple-400 mb-2">📉 Moving Averages</h3>
-                  <p className="text-sm text-gray-400">Identifies trend direction. Golden cross signals uptrend. Death cross signals downtrend.</p>
+              </div>
+
+              <div className="bg-gray-900 rounded-xl overflow-hidden border border-gray-800">
+                <div className="px-4 py-3 border-b border-gray-800">
+                  <h3 className="font-medium flex items-center gap-2"><Target className="w-4 h-4 text-emerald-400" /> Open Positions</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-800/50">
+                      <tr className="text-gray-400">
+                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
+                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
+                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map(p => (
+                        <tr key={p.id} className="border-b border-gray-800/50">
+                          <td className="px-4 py-3 font-medium">{p.symbol}</td>
+                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${p.direction === 'LONG' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{p.direction}</span></td>
+                          <td className="px-4 py-3 font-mono">{p.entryPrice.toFixed(5)}</td>
+                          <td className="px-4 py-3 font-mono text-blue-400">{p.currentPrice.toFixed(5)}</td>
+                          <td className={`px-4 py-3 font-medium ${p.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${p.pnl >= 0 ? '+' : ''}{p.pnl.toFixed(0)}</td>
+                          <td className="px-4 py-3">{p.frozen ? <span className="flex items-center gap-1 text-yellow-400 text-xs"><Shield className="w-3 h-3" /> Frozen</span> : <span className="text-green-400 text-xs">Active</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -271,6 +311,15 @@ export default function Home() {
                     <span className="text-gray-400">Bot Status:</span>
                     <span className={botRunning ? "text-green-400" : "text-yellow-400"}>{botRunning ? "🟢 Professional Trading Active" : "🟡 Standby"}</span>
                   </div>
+                </div>
+                <div className="mt-6 p-3 bg-gray-800/50 rounded-lg">
+                  <p className="text-sm text-gray-300">📌 How to use:</p>
+                  <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
+                    <li>Click <span className="text-cyan-400">"Start Professional Trading"</span></li>
+                    <li>Bot analyzes 5 currency pairs every 60 seconds</li>
+                    <li>Signals appear here and on Telegram</li>
+                    <li>Each signal includes Entry, Stop Loss, Take Profit</li>
+                  </ol>
                 </div>
               </div>
             </div>
