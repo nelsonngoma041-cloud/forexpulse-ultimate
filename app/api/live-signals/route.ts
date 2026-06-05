@@ -62,7 +62,7 @@ async function analyzeAndSendSignals() {
     return;
   }
   
-  console.log(`[${new Date().toLocaleTimeString()}] 📊 Analyzing markets...`);
+  console.log(`[${new Date().toLocaleTimeString()}] 📊 Analyzing markets with REAL data...`);
   
   let signalsSent = 0;
   
@@ -78,14 +78,14 @@ async function analyzeAndSendSignals() {
       tradingEngine.addPrice(symbol, realPrice);
       const signal = tradingEngine.analyze(symbol, realPrice);
       
-      console.log(`📈 ${symbol}: ${signal.action} | Confidence: ${signal.confidence}%`);
+      console.log(`📈 ${symbol}: ${signal.action} | Confidence: ${signal.confidence}% | Strategies: ${signal.agreeingStrategies.length}`);
       
       if (signal.action !== 'HOLD' && signal.confidence >= 40) {
         const now = Date.now();
         const lastSent = lastSignalTime[`${symbol}_${signal.action}`] || 0;
         
-        // Only send same signal every 5 minutes
-        if (now - lastSent > 300000) {
+        // Only send same signal every 10 minutes
+        if (now - lastSent > 600000) {
           lastSignalTime[`${symbol}_${signal.action}`] = now;
           signalsSent++;
           
@@ -95,11 +95,11 @@ async function analyzeAndSendSignals() {
           const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
             `*Symbol:* ${signal.symbol}\n` +
             `*Action:* ${signal.action}\n` +
-            `*Price:* ${signal.entryPrice.toFixed(5)}\n` +
+            `*Entry:* ${signal.entryPrice.toFixed(5)}\n` +
             `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
             `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
             `*Confidence:* ${signal.confidence}%\n\n` +
-            `💡 ${signal.reason}`;
+            `*Analysis:* ${signal.reason}`;
           
           await telegramBot.sendMessage(message);
           console.log(`✅ SENT: ${signal.action} ${symbol}`);
@@ -131,9 +131,10 @@ async function runAnalysisLoop() {
 export async function POST(request: Request) {
   const { action } = await request.json();
   
+  // START action - begins real trading signals
   if (action === 'start' && !isRunning) {
     isRunning = true;
-    console.log('🚀 Professional bot starting...');
+    console.log('🚀 Professional trading bot STARTING...');
     
     // Clear any existing timeout
     if (intervalId) {
@@ -143,14 +144,16 @@ export async function POST(request: Request) {
     
     await initializeHistoricalData();
     
-    await telegramBot.sendMessage('🤖 *ForexPulse PRO Activated*\n\n✅ Bot is now analyzing REAL market data\n✅ 5 currency pairs active\n✅ Signals will appear here when detected');
+    // Send activation message (NOT a test signal)
+    await telegramBot.sendMessage('🤖 *ForexPulse PRO Activated*\n\n✅ Bot is now analyzing REAL market data\n✅ 5 currency pairs active\n✅ First signal within 60 seconds');
     
-    // Start the loop
+    // Start the analysis loop
     await runAnalysisLoop();
     
-    return NextResponse.json({ success: true, message: 'Bot started' });
+    return NextResponse.json({ success: true, message: 'Bot started - monitoring 5 currency pairs' });
   }
   
+  // STOP action - stops the bot
   if (action === 'stop' && isRunning) {
     isRunning = false;
     if (intervalId) {
@@ -161,9 +164,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, message: 'Bot stopped' });
   }
   
+  // TEST action - sends a test message (does NOT start the bot)
   if (action === 'test') {
     await telegramBot.sendMessage('🔔 *TEST SIGNAL*\n\nIf you received this, your Telegram bot is working!\n\n✅ Ready to trade\n\nClick "Start Professional Trading" to begin.');
     return NextResponse.json({ success: true, message: 'Test sent' });
+  }
+  
+  // STATUS action - returns current state
+  if (action === 'status') {
+    return NextResponse.json({ 
+      running: isRunning,
+      intervalRunning: !!intervalId
+    });
   }
   
   return NextResponse.json({ running: isRunning });
@@ -173,6 +185,7 @@ export async function GET() {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   return NextResponse.json({ 
     running: isRunning,
-    apiKeyConfigured: !!apiKey
+    apiKeyConfigured: !!apiKey,
+    message: isRunning ? 'Bot analyzing REAL market data' : 'Bot stopped'
   });
-      }
+}
