@@ -12,7 +12,9 @@ import {
   AreaChart, Area, BarChart, Bar, 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
 } from "recharts";
+import { TelegramAlertBot } from './lib/telegram-alerts';
 
+// Initialize Telegram Bot
 const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
@@ -267,9 +269,12 @@ export default function Home() {
                   <table className="w-full text-sm">
                     <thead className="bg-gray-800/50">
                       <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Symbol</th><th className="px-4 py-2 text-left">Direction</th>
-                        <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
-                        <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">Status</th>
+                        <th className="px-4 py-2 text-left">Symbol</th>
+                        <th className="px-4 py-2 text-left">Direction</th>
+                        <th className="px-4 py-2 text-left">Entry</th>
+                        <th className="px-4 py-2 text-left">Current</th>
+                        <th className="px-4 py-2 text-left">P&L</th>
+                        <th className="px-4 py-2 text-left">Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -317,7 +322,7 @@ export default function Home() {
                   <ol className="text-xs text-gray-400 list-decimal list-inside mt-2 space-y-1">
                     <li>Click <span className="text-cyan-400">"Start Professional Trading"</span></li>
                     <li>Bot analyzes 5 currency pairs every 60 seconds</li>
-                    <li>Signals appear here and on Telegram</li>
+                    <li>Signals appear on Telegram when detected</li>
                     <li>Each signal includes Entry, Stop Loss, Take Profit</li>
                   </ol>
                 </div>
@@ -328,4 +333,4 @@ export default function Home() {
       </main>
     </div>
   );
-}
+                      }
