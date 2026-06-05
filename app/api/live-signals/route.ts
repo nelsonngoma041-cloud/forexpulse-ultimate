@@ -9,6 +9,7 @@ telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '77249614
 const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
 let isRunning = false;
 let intervalId: NodeJS.Timeout | null = null;
+let lastSignalTime: { [key: string]: number } = {};
 
 // Get REAL price from Twelve Data API
 async function getRealPrice(symbol: string): Promise<number | null> {
@@ -56,7 +57,14 @@ async function initializeHistoricalData() {
 }
 
 async function analyzeAndSendSignals() {
-  console.log('📊 Analyzing with REAL Twelve Data prices...');
+  if (!isRunning) {
+    console.log('Bot is not running, skipping analysis');
+    return;
+  }
+  
+  console.log(`[${new Date().toLocaleTimeString()}] 📊 Analyzing markets...`);
+  
+  let signalsSent = 0;
   
   for (const symbol of symbols) {
     try {
@@ -70,29 +78,53 @@ async function analyzeAndSendSignals() {
       tradingEngine.addPrice(symbol, realPrice);
       const signal = tradingEngine.analyze(symbol, realPrice);
       
-      console.log(`📈 ${symbol}: ${signal.action} | Confidence: ${signal.confidence}% | Strategies: ${signal.agreeingStrategies.length}`);
+      console.log(`📈 ${symbol}: ${signal.action} | Confidence: ${signal.confidence}%`);
       
       if (signal.action !== 'HOLD' && signal.confidence >= 40) {
-        const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
-        const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
+        const now = Date.now();
+        const lastSent = lastSignalTime[`${symbol}_${signal.action}`] || 0;
         
-        const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
-          `*Symbol:* ${signal.symbol}\n` +
-          `*Action:* ${signal.action}\n` +
-          `*Price:* ${signal.entryPrice.toFixed(5)}\n` +
-          `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
-          `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
-          `*Confidence:* ${signal.confidence}%\n\n` +
-          `*Agreeing Strategies:* ${signal.agreeingStrategies.length > 0 ? signal.agreeingStrategies.slice(0, 3).join(', ') : 'None'}\n\n` +
-          `💡 *Analysis:* ${signal.reason}`;
-        
-        await telegramBot.sendMessage(message);
-        console.log(`✅ SENT: ${signal.action} ${symbol}`);
+        // Only send same signal every 5 minutes
+        if (now - lastSent > 300000) {
+          lastSignalTime[`${symbol}_${signal.action}`] = now;
+          signalsSent++;
+          
+          const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
+          const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
+          
+          const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
+            `*Symbol:* ${signal.symbol}\n` +
+            `*Action:* ${signal.action}\n` +
+            `*Price:* ${signal.entryPrice.toFixed(5)}\n` +
+            `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
+            `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
+            `*Confidence:* ${signal.confidence}%\n\n` +
+            `💡 ${signal.reason}`;
+          
+          await telegramBot.sendMessage(message);
+          console.log(`✅ SENT: ${signal.action} ${symbol}`);
+        }
       }
       
     } catch (error) {
       console.error(`Error analyzing ${symbol}:`, error);
     }
+  }
+  
+  if (signalsSent === 0) {
+    console.log('⏸️ No new signals this cycle');
+  }
+}
+
+// Main analysis loop
+async function runAnalysisLoop() {
+  if (!isRunning) return;
+  
+  await analyzeAndSendSignals();
+  
+  // Schedule next run
+  if (isRunning) {
+    intervalId = setTimeout(runAnalysisLoop, 60000); // 60 seconds
   }
 }
 
@@ -103,12 +135,18 @@ export async function POST(request: Request) {
     isRunning = true;
     console.log('🚀 Professional bot starting...');
     
+    // Clear any existing timeout
+    if (intervalId) {
+      clearTimeout(intervalId);
+      intervalId = null;
+    }
+    
     await initializeHistoricalData();
     
-    await telegramBot.sendMessage('🤖 *ForexPulse PRO Activated*\n\nBot analyzing REAL market data from Twelve Data API.\n✅ 5 currency pairs\n✅ Multi-strategy analysis\n✅ Real-time signals');
+    await telegramBot.sendMessage('🤖 *ForexPulse PRO Activated*\n\n✅ Bot is now analyzing REAL market data\n✅ 5 currency pairs active\n✅ Signals will appear here when detected');
     
-    await analyzeAndSendSignals();
-    intervalId = setInterval(analyzeAndSendSignals, 60000);
+    // Start the loop
+    await runAnalysisLoop();
     
     return NextResponse.json({ success: true, message: 'Bot started' });
   }
@@ -116,15 +154,15 @@ export async function POST(request: Request) {
   if (action === 'stop' && isRunning) {
     isRunning = false;
     if (intervalId) {
-      clearInterval(intervalId);
+      clearTimeout(intervalId);
       intervalId = null;
     }
-    await telegramBot.sendMessage('⏸️ *ForexPulse PRO Deactivated*\n\nTrading bot stopped.');
+    await telegramBot.sendMessage('⏸️ *ForexPulse PRO Deactivated*\n\nTrading bot has been stopped.');
     return NextResponse.json({ success: true, message: 'Bot stopped' });
   }
   
   if (action === 'test') {
-    await telegramBot.sendMessage('🔔 *TEST SIGNAL*\n\nIf you received this, your Telegram bot is working!\n\n✅ Bot configured correctly\n✅ Ready to trade');
+    await telegramBot.sendMessage('🔔 *TEST SIGNAL*\n\nIf you received this, your Telegram bot is working!\n\n✅ Ready to trade\n\nClick "Start Professional Trading" to begin.');
     return NextResponse.json({ success: true, message: 'Test sent' });
   }
   
@@ -135,8 +173,6 @@ export async function GET() {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   return NextResponse.json({ 
     running: isRunning,
-    apiKeyConfigured: !!apiKey,
-    message: isRunning ? 'Bot analyzing REAL market data' : 'Bot stopped',
-    tip: 'Click "Start" to begin receiving signals'
+    apiKeyConfigured: !!apiKey
   });
-    }
+      }
