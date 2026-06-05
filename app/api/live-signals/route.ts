@@ -41,7 +41,6 @@ async function getRealPrice(symbol: string): Promise<number | null> {
 
 // Format time for display (Zambia Time = UTC+2)
 function formatZambiaTime(date: Date): string {
-  // Zambia is UTC+2 (no daylight savings)
   const zambiaTime = new Date(date.getTime() + (2 * 60 * 60 * 1000));
   return zambiaTime.toLocaleTimeString('en-GB', { 
     hour: '2-digit', 
@@ -51,92 +50,107 @@ function formatZambiaTime(date: Date): string {
   });
 }
 
-// Get current hour in Zambia time (UTC+2)
-function getZambiaHour(): number {
+// Get current Zambia time
+function getCurrentZambiaTime(): { time: string; seconds: number } {
   const now = new Date();
-  return now.getUTCHours() + 2;
+  const zambiaTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
+  return {
+    time: formatZambiaTime(now),
+    seconds: zambiaTime.getSeconds()
+  };
 }
 
-// Calculate optimal execution time based on Zambia timezone
-function getOptimalExecutionTime(): { time: Date; session: string; description: string; priority: string } {
+// Calculate exact entry time with countdown
+function getExactEntryTime(): { 
+  entryTime: Date; 
+  entryTimeString: string; 
+  countdownSeconds: number;
+  entryWindow: string;
+  instruction: string;
+} {
   const now = new Date();
-  const zambiaHour = getZambiaHour();
-  const zambiaMinute = new Date().getUTCMinutes();
+  const zambiaTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
+  const currentSecond = zambiaTime.getSeconds();
   
-  let session = '';
-  let description = '';
-  let priority = '';
-  let executionTime = new Date(now);
+  // Round up to next 15-second mark for better execution
+  let targetSecond = Math.ceil(currentSecond / 15) * 15;
+  if (targetSecond === 60) targetSecond = 0;
   
-  // Best trading hours in Zambia time (UTC+2)
+  const entryTime = new Date(now);
+  const secondsToAdd = targetSecond - currentSecond + (targetSecond === 0 ? 60 : 0);
+  entryTime.setSeconds(now.getSeconds() + secondsToAdd);
+  
+  const entryTimeZambia = new Date(entryTime.getTime() + (2 * 60 * 60 * 1000));
+  const entryTimeString = entryTimeZambia.toLocaleTimeString('en-GB', { 
+    hour: '2-digit', 
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false 
+  });
+  
+  let countdownSeconds = secondsToAdd;
+  let entryWindow = '';
+  let instruction = '';
+  
+  if (countdownSeconds <= 5) {
+    entryWindow = '🚨 IMMEDIATE ENTRY 🚨';
+    instruction = 'PRESS BUY/SELL NOW - This is your entry window!';
+  } else if (countdownSeconds <= 15) {
+    entryWindow = '⏰ ENTERING SOON';
+    instruction = `Get ready to press entry in ${countdownSeconds} seconds`;
+  } else {
+    instruction = `Set a timer for ${countdownSeconds} seconds from now`;
+  }
+  
+  return { entryTime, entryTimeString, countdownSeconds, entryWindow, instruction };
+}
+
+function getOptimalExecutionTime(): { session: string; description: string; priority: string } {
+  const zambiaHour = new Date().getUTCHours() + 2;
+  
   if (zambiaHour >= 15 && zambiaHour < 19) {
-    session = '🔥 LONDON & NEW YORK OVERLAP';
-    description = 'Highest liquidity - 50% of daily volume';
-    priority = 'EXECUTE NOW - Best time of day';
-    executionTime.setSeconds(now.getSeconds() + 5);
-  } 
-  else if (zambiaHour >= 14 && zambiaHour < 15) {
-    session = '📈 PRE-OVERLAP BUILDUP';
-    description = 'Liquidity increasing - prepare for entry';
-    priority = 'Get ready - overlap starts in 1 hour';
-    executionTime.setMinutes(zambiaMinute + 5);
+    return {
+      session: '🔥 LONDON & NEW YORK OVERLAP',
+      description: 'Highest liquidity - BEST time to trade',
+      priority: 'EXECUTE NOW - Prime trading window'
+    };
+  } else if (zambiaHour >= 10 && zambiaHour < 15) {
+    return {
+      session: '✅ LONDON SESSION',
+      description: 'Good liquidity - recommended',
+      priority: 'Execute within 5 minutes'
+    };
+  } else if (zambiaHour >= 19 && zambiaHour < 22) {
+    return {
+      session: '⚠️ NEW YORK ONLY',
+      description: 'Lower liquidity - careful with spreads',
+      priority: 'Consider waiting or use limit orders'
+    };
+  } else {
+    return {
+      session: '🌙 ASIA SESSION',
+      description: 'Low liquidity - avoid trading',
+      priority: 'AVOID - Wait for 10:00 Zambia time'
+    };
   }
-  else if (zambiaHour >= 10 && zambiaHour < 15) {
-    session = '✅ LONDON SESSION';
-    description = 'Good liquidity - 30% of daily volume';
-    priority = 'Execute within 5 minutes';
-    executionTime.setSeconds(now.getSeconds() + 10);
-  }
-  else if (zambiaHour >= 19 && zambiaHour < 22) {
-    session = '⚠️ NEW YORK ONLY';
-    description = 'Lower liquidity - wider spreads possible';
-    priority = 'Consider waiting or use limit orders';
-    executionTime.setSeconds(now.getSeconds() + 30);
-  }
-  else if (zambiaHour >= 22 || zambiaHour < 3) {
-    session = '🌙 ASIA SESSION (NIGHT)';
-    description = 'Very low liquidity - avoid trading';
-    priority = 'AVOID - Set alert for 10:00 Zambia time';
-    // Set to next good session (10:00 Zambia time)
-    const nextGood = new Date(now);
-    nextGood.setUTCHours(8, 0, 0, 0); // 10:00 Zambia time
-    if (nextGood < now) nextGood.setDate(nextGood.getDate() + 1);
-    executionTime = nextGood;
-  }
-  else {
-    session = '🌅 ASIA SESSION (MORNING)';
-    description = 'Low liquidity - quiet market';
-    priority = 'Wait for London open (10:00)';
-    const nextGood = new Date(now);
-    nextGood.setUTCHours(8, 0, 0, 0);
-    if (nextGood < now) nextGood.setDate(nextGood.getDate() + 1);
-    executionTime = nextGood;
-  }
-  
-  return { time: executionTime, session, description, priority };
 }
 
-// Calculate recommended hold time based on session
-function getRecommendedHoldTime(session: string): number {
-  if (session.includes('OVERLAP')) return 60;
-  if (session.includes('LONDON')) return 45;
-  if (session.includes('NEW YORK')) return 30;
-  return 20;
+function getRecommendedHoldTime(): number {
+  const zambiaHour = new Date().getUTCHours() + 2;
+  if (zambiaHour >= 15 && zambiaHour < 19) return 60;
+  if (zambiaHour >= 10 && zambiaHour < 15) return 45;
+  return 30;
 }
 
-// Generate historical data for better analysis
 async function initializeHistoricalData() {
-  console.log('📊 Initializing historical data for analysis...');
-  
+  console.log('📊 Initializing historical data...');
   for (const symbol of symbols) {
     const price = await getRealPrice(symbol);
     if (price) {
       for (let i = 0; i < 50; i++) {
         const variation = (Math.random() - 0.5) * 0.005;
-        const historicalPrice = price * (1 + variation);
-        tradingEngine.addPrice(symbol, historicalPrice);
+        tradingEngine.addPrice(symbol, price * (1 + variation));
       }
-      console.log(`✅ Initialized ${symbol}`);
     }
   }
 }
@@ -144,8 +158,8 @@ async function initializeHistoricalData() {
 async function analyzeAndSendSignals() {
   if (!isRunning) return;
   
-  const zambiaHour = getZambiaHour();
-  console.log(`[Zambia Time: ${formatZambiaTime(new Date())}] 📊 Analyzing markets...`);
+  const currentZambia = getCurrentZambiaTime();
+  console.log(`[Zambia: ${currentZambia.time}] 📊 Analyzing...`);
   
   for (const symbol of symbols) {
     try {
@@ -155,29 +169,21 @@ async function analyzeAndSendSignals() {
       tradingEngine.addPrice(symbol, realPrice);
       const signal = tradingEngine.analyze(symbol, realPrice);
       
-      console.log(`📈 ${symbol}: ${signal.action} | Confidence: ${signal.confidence}%`);
-      
       if (signal.action !== 'HOLD' && signal.confidence >= 30) {
         const now = Date.now();
         const lastSent = lastSignalTime[`${symbol}_${signal.action}`] || 0;
         
-        // Only send same signal every 30 minutes
         if (now - lastSent > 1800000) {
           lastSignalTime[`${symbol}_${signal.action}`] = now;
           
           const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
           const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
           
-          // Get execution timing
-          const execTime = getOptimalExecutionTime();
-          const zambiaExecTime = formatZambiaTime(execTime.time);
-          const holdMinutes = getRecommendedHoldTime(execTime.session);
+          const execInfo = getOptimalExecutionTime();
+          const exactEntry = getExactEntryTime();
+          const holdMinutes = getRecommendedHoldTime();
           
-          // Determine if signal is urgent
-          const isUrgent = execTime.session.includes('OVERLAP');
-          const urgencyEmoji = isUrgent ? '🚨🔥' : '📊';
-          
-          // Build the message
+          // Build the message with EXACT entry instructions
           const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
             `*Symbol:* ${signal.symbol}\n` +
             `*Action:* ${signal.action}\n` +
@@ -185,37 +191,44 @@ async function analyzeAndSendSignals() {
             `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
             `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
             `*Confidence:* ${signal.confidence}%\n\n` +
-            `⏰ *ZAMBIA TIME (UTC+2)*\n` +
-            `• Current time: ${formatZambiaTime(new Date())}\n` +
-            `• Best execution: ${zambiaExecTime}\n` +
-            `• Session: ${execTime.session}\n` +
-            `• ${execTime.description}\n\n` +
-            `${urgencyEmoji} *Action:* ${execTime.priority}\n\n` +
-            `⏱️ *Recommended Hold Time:* ${holdMinutes} minutes\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `⏰ *EXACT ENTRY TIME (Zambia UTC+2)*\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `📍 *Current Time:* ${currentZambia.time}\n` +
+            `🎯 *PRESS ENTRY AT:* ${exactEntry.entryTimeString} SHARP\n` +
+            `⏱️ *Countdown:* ${exactEntry.countdownSeconds} seconds\n` +
+            `${exactEntry.entryWindow ? `🚨 *${exactEntry.entryWindow}* 🚨\n` : ''}` +
+            `📝 *Instruction:* ${exactEntry.instruction}\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `📊 *Market Session:*\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `• ${execInfo.session}\n` +
+            `• ${execInfo.description}\n` +
+            `• ${execInfo.priority}\n\n` +
+            `⏱️ *Hold Time:* ${holdMinutes} minutes\n\n` +
             `📊 *Technical Analysis:*\n` +
             `• ${signal.reason}\n\n` +
-            `💡 *Trading Tips for Zambia:*\n` +
-            `• Best hours: 15:00 - 19:00 (Lunch break to evening)\n` +
-            `• Good hours: 10:00 - 15:00 (Morning to lunch)\n` +
-            `• Avoid trading: 22:00 - 10:00 (Overnight)`;
+            `💡 *Zambia Trading Hours:*\n` +
+            `• 🔥 BEST: 15:00 - 19:00 (Execute immediately)\n` +
+            `• ✅ GOOD: 10:00 - 15:00 (Execute within 5 min)\n` +
+            `• ❌ AVOID: 22:00 - 10:00 (Sleep/rest)`;
           
           await telegramBot.sendMessage(message);
-          console.log(`✅ ${signal.action} ${symbol} signal sent | Execute at ${zambiaExecTime} Zambia time`);
+          console.log(`✅ ${signal.action} ${symbol} | Entry at ${exactEntry.entryTimeString} Zambia time`);
         }
       }
       
     } catch (error) {
-      console.error(`Error analyzing ${symbol}:`, error);
+      console.error(`Error:`, error);
     }
   }
 }
 
-// Main analysis loop
 async function runAnalysisLoop() {
   if (!isRunning) return;
   await analyzeAndSendSignals();
   if (isRunning) {
-    intervalId = setTimeout(runAnalysisLoop, 120000); // 2 minutes
+    intervalId = setTimeout(runAnalysisLoop, 120000);
   }
 }
 
@@ -224,74 +237,67 @@ export async function POST(request: Request) {
   
   if (action === 'start' && !isRunning) {
     isRunning = true;
-    console.log('🚀 Professional bot starting for Zambia timezone...');
+    console.log('🚀 Bot starting for Zambia...');
     
     if (intervalId) clearTimeout(intervalId);
     
     await initializeHistoricalData();
     
+    const currentZambia = getCurrentZambiaTime();
     const execInfo = getOptimalExecutionTime();
-    const currentZambiaTime = formatZambiaTime(new Date());
-    const nextGoodTime = formatZambiaTime(execInfo.time);
+    const exactEntry = getExactEntryTime();
     
-    await telegramBot.sendMessage('🤖 *ForexPulse PRO Activated for Zambia* 🇿🇲\n\n' +
-      `✅ Current Zambia time: ${currentZambiaTime}\n` +
-      `✅ Timezone: UTC+2 (Central Africa Time)\n` +
-      `📊 Best trading hours: 15:00 - 19:00\n` +
-      `📈 Good trading hours: 10:00 - 15:00\n\n` +
-      `⏰ Next good session: ${nextGoodTime}\n` +
-      `📊 Session: ${execInfo.session}\n\n` +
-      '✅ Bot analyzing REAL market data\n' +
-      '✅ Signals will include Zambia time execution windows');
+    await telegramBot.sendMessage('🤖 *ForexPulse PRO - Zambia Edition* 🇿🇲\n\n' +
+      `✅ Current Zambia time: ${currentZambia.time}\n` +
+      `✅ Timezone: UTC+2 (Central Africa Time)\n\n` +
+      `📊 *Market Status:*\n` +
+      `• ${execInfo.session}\n` +
+      `• ${execInfo.description}\n\n` +
+      `⏰ *Next entry window:* ${exactEntry.entryTimeString}\n` +
+      `• ${exactEntry.countdownSeconds} seconds from now\n\n` +
+      `💡 *Best Trading Hours:*\n` +
+      `• 🔥 15:00 - 19:00 (Prime window)\n` +
+      `• ✅ 10:00 - 15:00 (Good window)\n` +
+      `• ❌ 22:00 - 10:00 (Avoid)\n\n` +
+      '✅ Bot is ready - signals will include exact entry times');
     
     await runAnalysisLoop();
     
-    return NextResponse.json({ success: true, message: 'Bot started for Zambia timezone' });
+    return NextResponse.json({ success: true, message: 'Bot started' });
   }
   
   if (action === 'stop' && isRunning) {
     isRunning = false;
     if (intervalId) clearTimeout(intervalId);
-    await telegramBot.sendMessage('⏸️ *ForexPulse PRO Deactivated*\n\nTrading bot stopped.');
+    await telegramBot.sendMessage('⏸️ *Bot Stopped*\n\nTrading bot deactivated.');
     return NextResponse.json({ success: true, message: 'Bot stopped' });
   }
   
   if (action === 'test') {
+    const currentZambia = getCurrentZambiaTime();
+    const exactEntry = getExactEntryTime();
     const execInfo = getOptimalExecutionTime();
-    const currentTime = formatZambiaTime(new Date());
-    const execTime = formatZambiaTime(execInfo.time);
     
-    await telegramBot.sendMessage('🔔 *TEST SIGNAL - Zambia Timezone*\n\n' +
-      `🇿🇲 Current Zambia time: ${currentTime}\n` +
-      `⏰ Best execution: ${execTime}\n` +
+    await telegramBot.sendMessage('🔔 *TEST SIGNAL - Entry Timing Demo*\n\n' +
+      `🇿🇲 Current Zambia time: ${currentZambia.time}\n` +
+      `🎯 TEST ENTRY AT: ${exactEntry.entryTimeString}\n` +
+      `⏱️ Countdown: ${exactEntry.countdownSeconds} seconds\n\n` +
       `📊 Session: ${execInfo.session}\n` +
       `📈 ${execInfo.description}\n\n` +
-      `✅ Your bot is configured correctly for Zambia!\n` +
-      `📊 Best trading: 15:00 - 19:00\n` +
-      `📈 Good trading: 10:00 - 15:00`);
+      `✅ Your bot is ready!\n` +
+      `📱 Keep this chat open\n` +
+      `🟢 When you see a signal, press entry at the exact time shown`);
     return NextResponse.json({ success: true, message: 'Test sent' });
-  }
-  
-  if (action === 'status') {
-    const execInfo = getOptimalExecutionTime();
-    return NextResponse.json({ 
-      running: isRunning,
-      zambiaTime: formatZambiaTime(new Date()),
-      currentSession: execInfo.session,
-      nextExecutionTime: formatZambiaTime(execInfo.time)
-    });
   }
   
   return NextResponse.json({ running: isRunning });
 }
 
 export async function GET() {
-  const execInfo = getOptimalExecutionTime();
+  const exactEntry = getExactEntryTime();
   return NextResponse.json({ 
     running: isRunning,
-    zambiaTime: formatZambiaTime(new Date()),
-    currentSession: execInfo.session,
-    nextExecutionTime: formatZambiaTime(execInfo.time),
-    message: isRunning ? 'Bot running for Zambia timezone' : 'Bot stopped'
+    nextEntryTime: exactEntry.entryTimeString,
+    countdownSeconds: exactEntry.countdownSeconds
   });
 }
