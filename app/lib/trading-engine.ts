@@ -1,4 +1,4 @@
-// app/lib/trading-engine.ts - Professional Multi-Strategy Engine (Simplified)
+// app/lib/trading-engine.ts - Professional Multi-Strategy Engine
 export interface TradeSignal {
   symbol: string;
   action: 'BUY' | 'SELL' | 'HOLD';
@@ -77,7 +77,7 @@ export class ProfessionalTradingEngine {
         entryPrice: currentPrice,
         stopLoss: currentPrice * 0.99,
         takeProfit: currentPrice * 1.02,
-        reason: 'Collecting market data...',
+        reason: `Collecting market data (${prices.length}/30 candles)...`,
         agreeingStrategies: []
       };
     }
@@ -94,10 +94,10 @@ export class ProfessionalTradingEngine {
     // Strategy 1: RSI Analysis
     if (rsi < 30) {
       buyScore += 35;
-      agreeing.push('RSI Oversold');
+      agreeing.push(`RSI Oversold (${rsi.toFixed(1)})`);
     } else if (rsi > 70) {
       sellScore += 35;
-      agreeing.push('RSI Overbought');
+      agreeing.push(`RSI Overbought (${rsi.toFixed(1)})`);
     }
 
     // Strategy 2: MACD Analysis
@@ -118,35 +118,31 @@ export class ProfessionalTradingEngine {
       agreeing.push('MA Downtrend');
     }
 
-    // Strategy 4: Price Momentum (24-hour change)
-    if (prices.length >= 24) {
-      const price24hAgo = prices[prices.length - 24];
-      const changePercent = ((currentPrice - price24hAgo) / price24hAgo) * 100;
-      if (changePercent > 0.1) {
-        buyScore += 10;
-        agreeing.push('Positive Momentum');
-      } else if (changePercent < -0.1) {
-        sellScore += 10;
-        agreeing.push('Negative Momentum');
-      }
+    // Strategy 4: Price vs MA20
+    if (currentPrice > ma20) {
+      buyScore += 10;
+      if (!agreeing.includes('MA Uptrend')) agreeing.push('Price above MA20');
+    } else {
+      sellScore += 10;
+      if (!agreeing.includes('MA Downtrend')) agreeing.push('Price below MA20');
     }
 
-    // Determine action based on scores
+    // Determine action
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
     
     const totalScore = buyScore + sellScore;
     
-    if (buyScore > sellScore && agreeing.length >= 2) {
+    if (buyScore > sellScore && buyScore >= 50) {
       action = 'BUY';
-      confidence = totalScore > 0 ? Math.min(Math.floor((buyScore / totalScore) * 100), 95) : 50;
-    } else if (sellScore > buyScore && agreeing.length >= 2) {
+      confidence = Math.min(Math.floor((buyScore / Math.max(totalScore, 1)) * 100), 95);
+    } else if (sellScore > buyScore && sellScore >= 50) {
       action = 'SELL';
-      confidence = totalScore > 0 ? Math.min(Math.floor((sellScore / totalScore) * 100), 95) : 50;
+      confidence = Math.min(Math.floor((sellScore / Math.max(totalScore, 1)) * 100), 95);
     }
 
-    // Calculate dynamic stop loss and take profit
-    const atr = 0.0015; // Approximate ATR for forex
+    // Calculate stop loss and take profit
+    const atr = 0.001;
     let stopLoss = currentPrice;
     let takeProfit = currentPrice;
     
@@ -159,8 +155,8 @@ export class ProfessionalTradingEngine {
     }
 
     const reasonText = action !== 'HOLD' 
-      ? `${agreeing.length} strategies confirm: ${agreeing.join(', ')}`
-      : `No clear signal. ${agreeing.length} strategies indicate potential.`;
+      ? `${agreeing.length} strategies confirm: ${agreeing.slice(0, 3).join(', ')}`
+      : `${agreeing.length} strategies show mixed signals`;
 
     return {
       symbol,
