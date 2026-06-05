@@ -93,19 +93,19 @@ export class ProfessionalTradingEngine {
 
     // RSI Analysis
     if (rsi < 30) {
-      buyScore += 35;
+      buyScore += 40;
       agreeing.push(`RSI Oversold (${rsi.toFixed(1)})`);
     } else if (rsi > 70) {
-      sellScore += 35;
+      sellScore += 40;
       agreeing.push(`RSI Overbought (${rsi.toFixed(1)})`);
     }
 
     // MACD Analysis
-    if (macd.histogram > 0.00005) {
-      buyScore += 30;
+    if (macd.histogram > 0) {
+      buyScore += 35;
       agreeing.push('MACD Bullish');
-    } else if (macd.histogram < -0.00005) {
-      sellScore += 30;
+    } else if (macd.histogram < 0) {
+      sellScore += 35;
       agreeing.push('MACD Bearish');
     }
 
@@ -118,25 +118,16 @@ export class ProfessionalTradingEngine {
       agreeing.push('MA Downtrend');
     }
 
-    // Price vs MA20
-    if (currentPrice > ma20) {
-      buyScore += 10;
-      if (!agreeing.includes('MA Uptrend')) agreeing.push('Price above MA20');
-    } else {
-      sellScore += 10;
-      if (!agreeing.includes('MA Downtrend')) agreeing.push('Price below MA20');
-    }
-
+    // Determine action
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
-    const totalScore = buyScore + sellScore;
     
-    if (buyScore > sellScore && buyScore >= 30) {
+    if (buyScore > sellScore && buyScore >= 40) {
       action = 'BUY';
-      confidence = Math.min(Math.floor((buyScore / Math.max(totalScore, 1)) * 100), 95);
-    } else if (sellScore > buyScore && sellScore >= 30) {
+      confidence = Math.min(buyScore, 95);
+    } else if (sellScore > buyScore && sellScore >= 40) {
       action = 'SELL';
-      confidence = Math.min(Math.floor((sellScore / Math.max(totalScore, 1)) * 100), 95);
+      confidence = Math.min(sellScore, 95);
     }
 
     const atr = 0.001;
@@ -151,10 +142,6 @@ export class ProfessionalTradingEngine {
       takeProfit = currentPrice * (1 - atr * 3);
     }
 
-    const reasonText = action !== 'HOLD' 
-      ? `${agreeing.length} strategies: ${agreeing.slice(0, 3).join(', ')}`
-      : `${agreeing.length} strategies show mixed signals`;
-
     return {
       symbol,
       action,
@@ -162,7 +149,7 @@ export class ProfessionalTradingEngine {
       entryPrice: currentPrice,
       stopLoss,
       takeProfit,
-      reason: reasonText,
+      reason: agreeing.length > 0 ? `${agreeing.slice(0, 2).join(', ')}` : 'No clear signal',
       agreeingStrategies: agreeing
     };
   }
