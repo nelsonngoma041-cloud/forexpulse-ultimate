@@ -1,4 +1,4 @@
-// app/api/live-signals/route.ts - With REAL Twelve Data API
+// app/api/live-signals/route.ts
 import { NextResponse } from 'next/server';
 import { TelegramAlertBot } from '@/app/lib/telegram-alerts';
 import { tradingEngine } from '@/app/lib/trading-engine';
@@ -10,80 +10,47 @@ const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
 let isRunning = false;
 let intervalId: NodeJS.Timeout | null = null;
 
-// Get REAL price from Twelve Data API
-async function getRealPrice(symbol: string): Promise<number | null> {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  
-  try {
-    // Convert symbol format (EUR/USD -> EUR/USD for Twelve Data)
-    const response = await fetch(
-      `https://api.twelvedata.com/price?symbol=${symbol}&apikey=${apiKey}`
-    );
-    const data = await response.json();
-    
-    if (data.price) {
-      return parseFloat(data.price);
-    }
-    return null;
-  } catch (error) {
-    console.error(`Error fetching ${symbol}:`, error);
-    return null;
-  }
-}
+// Get current price (simulated - replace with real API)
+const getPrice = (symbol: string): number => {
+  const basePrices: Record<string, number> = {
+    'EUR/USD': 1.0892,
+    'GBP/USD': 1.2715,
+    'USD/JPY': 157.85,
+    'AUD/USD': 0.6645,
+    'USD/CAD': 1.3715
+  };
+  // Add small random movement
+  const change = (Math.random() - 0.5) * 0.0005;
+  return basePrices[symbol] + change;
+};
 
 async function analyzeAndSendSignals() {
-  console.log('📊 Fetching REAL market data from Twelve Data...');
+  console.log('📊 Professional analysis running...');
   
   for (const symbol of symbols) {
-    try {
-      // Get REAL price from API
-      const realPrice = await getRealPrice(symbol);
+    const price = getPrice(symbol);
+    tradingEngine.addPrice(symbol, price);
+    const signal = tradingEngine.analyze(symbol, price);
+    
+    if (signal.action !== 'HOLD' && signal.confidence >= 60) {
+      const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
+      const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
       
-      if (!realPrice) {
-        console.log(`⚠️ Could not fetch ${symbol}, using simulated price`);
-        // Fallback to simulated price if API fails
-        const fallbackPrice = symbol === 'EUR/USD' ? 1.0892 :
-                              symbol === 'GBP/USD' ? 1.2715 :
-                              symbol === 'USD/JPY' ? 157.85 :
-                              symbol === 'AUD/USD' ? 0.6645 : 1.3715;
-        tradingEngine.addPrice(symbol, fallbackPrice);
-        continue;
-      }
+      const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
+        `*Symbol:* ${signal.symbol}\n` +
+        `*Action:* ${signal.action}\n` +
+        `*Entry:* ${signal.entryPrice.toFixed(5)}\n` +
+        `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
+        `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
+        `*Confidence:* ${signal.confidence}%\n\n` +
+        `📊 *Analysis:*\n` +
+        `• ${signal.reason}\n\n` +
+        `💡 *Agreeing Strategies:* ${signal.agreeingStrategies.length > 0 ? signal.agreeingStrategies.join(', ') : 'None'}`;
       
-      // Add real price to trading engine
-      tradingEngine.addPrice(symbol, realPrice);
-      
-      // Get professional analysis
-      const signal = tradingEngine.analyze(symbol, realPrice);
-      
-      if (signal.action !== 'HOLD' && signal.confidence >= 60) {
-        const emoji = signal.action === 'BUY' ? '🟢' : '🔴';
-        const trendEmoji = signal.action === 'BUY' ? '📈' : '📉';
-        
-        const message = `${emoji} ${trendEmoji} *${signal.action} SIGNAL* ${trendEmoji} ${emoji}\n\n` +
-          `*Symbol:* ${signal.symbol}\n` +
-          `*Action:* ${signal.action === 'BUY' ? 'BUY' : 'SELL'}\n` +
-          `*Current Price:* ${signal.entryPrice.toFixed(5)}\n` +
-          `*Stop Loss:* ${signal.stopLoss.toFixed(5)}\n` +
-          `*Take Profit:* ${signal.takeProfit.toFixed(5)}\n` +
-          `*Confidence:* ${signal.confidence}%\n\n` +
-          `*Strategies Agreeing:* ${signal.agreeingStrategies.length}/5\n` +
-          `*Agreeing:* ${signal.agreeingStrategies.join(', ') || 'None'}\n\n` +
-          `📊 *Technical Analysis*\n` +
-          `• ${signal.indicators.rsi.signal}\n` +
-          `• ${signal.indicators.macd.histogram > 0 ? 'Bullish' : 'Bearish'} MACD momentum\n` +
-          `• ${signal.indicators.ma.trend}\n` +
-          `• ${signal.indicators.supportResistance.signal}\n\n` +
-          `💡 *Reason:* ${signal.reason}`;
-        
-        await telegramBot.sendMessage(message);
-        console.log(`✅ ${signal.action} ${signal.symbol} (${signal.confidence}%) - ${signal.agreeingStrategies.length} strategies agree`);
-      } else {
-        console.log(`⏸️ ${symbol}: ${signal.reason} (${signal.confidence}%)`);
-      }
-      
-    } catch (error) {
-      console.error(`Error analyzing ${symbol}:`, error);
+      await telegramBot.sendMessage(message);
+      console.log(`✅ ${signal.action} ${signal.symbol} (${signal.confidence}%)`);
+    } else {
+      console.log(`⏸️ ${symbol}: ${signal.reason} (Conf: ${signal.confidence}%)`);
     }
   }
 }
@@ -93,27 +60,21 @@ export async function POST(request: Request) {
   
   if (action === 'start' && !isRunning) {
     isRunning = true;
-    console.log('🚀 Professional bot started with REAL Twelve Data prices');
+    console.log('🚀 Professional trading bot started');
     await analyzeAndSendSignals();
-    intervalId = setInterval(analyzeAndSendSignals, 120000); // Every 2 minutes
-    return NextResponse.json({ success: true, message: 'Professional bot started with REAL market data' });
+    intervalId = setInterval(analyzeAndSendSignals, 120000);
+    return NextResponse.json({ success: true });
   }
   
   if (action === 'stop' && isRunning) {
     isRunning = false;
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-    return NextResponse.json({ success: true, message: 'Trading bot stopped' });
+    if (intervalId) clearInterval(intervalId);
+    return NextResponse.json({ success: true });
   }
   
   return NextResponse.json({ running: isRunning });
 }
 
 export async function GET() {
-  return NextResponse.json({ 
-    running: isRunning,
-    message: isRunning ? 'Bot analyzing REAL market data with 5 strategies' : 'Bot stopped'
-  });
+  return NextResponse.json({ running: isRunning });
 }
