@@ -70,7 +70,7 @@ export class ProfessionalTradingEngine {
   analyze(symbol: string, currentPrice: number): TradeSignal {
     const prices = this.priceHistory.get(symbol) || [];
     
-    if (prices.length < 20) {
+    if (prices.length < 30) {
       return {
         symbol,
         action: 'HOLD',
@@ -78,7 +78,7 @@ export class ProfessionalTradingEngine {
         entryPrice: currentPrice,
         stopLoss: currentPrice * 0.99,
         takeProfit: currentPrice * 1.02,
-        reason: `Collecting data (${prices.length}/20 candles)...`,
+        reason: `Collecting data (${prices.length}/30 candles)...`,
         agreeingStrategies: []
       };
     }
@@ -137,25 +137,22 @@ export class ProfessionalTradingEngine {
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
     
-    if (buyScore > sellScore && buyScore >= 25) {
+    if (buyScore > sellScore && buyScore >= 20) {
       action = 'BUY';
       confidence = Math.min(Math.floor((buyScore / (buyScore + sellScore)) * 100), 95);
-    } else if (sellScore > buyScore && sellScore >= 25) {
+    } else if (sellScore > buyScore && sellScore >= 20) {
       action = 'SELL';
       confidence = Math.min(Math.floor((sellScore / (buyScore + sellScore)) * 100), 95);
     }
-
-    // Test mode - generate signal even if weak
-    if (action === 'HOLD' && (buyScore > 0 || sellScore > 0)) {
-      if (buyScore > sellScore) {
-        action = 'BUY';
-        confidence = 55;
-        agreeing.push('TEST: Simulated BUY signal');
-      } else if (sellScore > buyScore) {
-        action = 'SELL';
-        confidence = 55;
-        agreeing.push('TEST: Simulated SELL signal');
-      }
+    
+    // FORCE SIGNAL for testing when market is quiet
+    if (action === 'HOLD' && prices.length >= 30) {
+      const hash = symbol.split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+      const isBuy = (Math.floor(Date.now() / 60000) + hash) % 2 === 0;
+      action = isBuy ? 'BUY' : 'SELL';
+      confidence = 65;
+      agreeing.push('🔴 DEMO SIGNAL - Testing mode');
+      agreeing.push(isBuy ? 'Demo BUY signal' : 'Demo SELL signal');
     }
 
     const atr = 0.001;
