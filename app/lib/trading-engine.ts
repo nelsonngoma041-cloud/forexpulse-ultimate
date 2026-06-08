@@ -69,7 +69,8 @@ export class ProfessionalTradingEngine {
 
   analyze(symbol: string, currentPrice: number): TradeSignal {
     const prices = this.priceHistory.get(symbol) || [];
-    if (prices.length < 30) {
+    
+    if (prices.length < 20) {
       return {
         symbol,
         action: 'HOLD',
@@ -77,7 +78,7 @@ export class ProfessionalTradingEngine {
         entryPrice: currentPrice,
         stopLoss: currentPrice * 0.99,
         takeProfit: currentPrice * 1.02,
-        reason: `Collecting data (${prices.length}/30)...`,
+        reason: `Collecting data (${prices.length}/20 candles)...`,
         agreeingStrategies: []
       };
     }
@@ -91,24 +92,25 @@ export class ProfessionalTradingEngine {
     let sellScore = 0;
     const agreeing: string[] = [];
 
-    // RSI Analysis - Lower thresholds for more signals
+    // RSI Analysis
     if (rsi < 45) {
-      buyScore += 35;
-      agreeing.push(`RSI ${rsi.toFixed(1)} (Oversold area)`);
+      buyScore += 40;
+      agreeing.push(`RSI ${rsi.toFixed(1)} (Oversold)`);
     } else if (rsi > 55) {
-      sellScore += 35;
-      agreeing.push(`RSI ${rsi.toFixed(1)} (Overbought area)`);
+      sellScore += 40;
+      agreeing.push(`RSI ${rsi.toFixed(1)} (Overbought)`);
+    } else if (rsi < 50) {
+      buyScore += 15;
     } else {
-      if (rsi < 50) buyScore += 15;
-      else sellScore += 15;
+      sellScore += 15;
     }
 
     // MACD Analysis
     if (macd.histogram > 0) {
-      buyScore += 30;
+      buyScore += 35;
       agreeing.push('MACD Bullish');
     } else if (macd.histogram < 0) {
-      sellScore += 30;
+      sellScore += 35;
       agreeing.push('MACD Bearish');
     } else {
       buyScore += 10;
@@ -126,22 +128,34 @@ export class ProfessionalTradingEngine {
 
     if (ma20 > ma50) {
       buyScore += 15;
-      agreeing.push('MA20 above MA50');
+      if (!agreeing.includes('Price above MA20')) agreeing.push('MA Uptrend');
     } else {
       sellScore += 15;
-      agreeing.push('MA20 below MA50');
+      if (!agreeing.includes('Price below MA20')) agreeing.push('MA Downtrend');
     }
 
-    // Determine action - Lowered confidence threshold
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let confidence = 0;
     
-    if (buyScore > sellScore && buyScore >= 30) {
+    if (buyScore > sellScore && buyScore >= 25) {
       action = 'BUY';
       confidence = Math.min(Math.floor((buyScore / (buyScore + sellScore)) * 100), 95);
-    } else if (sellScore > buyScore && sellScore >= 30) {
+    } else if (sellScore > buyScore && sellScore >= 25) {
       action = 'SELL';
       confidence = Math.min(Math.floor((sellScore / (buyScore + sellScore)) * 100), 95);
+    }
+
+    // Test mode - generate signal even if weak
+    if (action === 'HOLD' && (buyScore > 0 || sellScore > 0)) {
+      if (buyScore > sellScore) {
+        action = 'BUY';
+        confidence = 55;
+        agreeing.push('TEST: Simulated BUY signal');
+      } else if (sellScore > buyScore) {
+        action = 'SELL';
+        confidence = 55;
+        agreeing.push('TEST: Simulated SELL signal');
+      }
     }
 
     const atr = 0.001;
