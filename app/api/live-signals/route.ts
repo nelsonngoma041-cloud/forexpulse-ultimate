@@ -7,7 +7,7 @@ const telegramBot = new TelegramAlertBot();
 telegramBot.setToken('8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q', '7724961440');
 
 // MT5 Bridge Configuration
-const MT5_BRIDGE_URL = process.env.MT5_BRIDGE_URL || 'http://bore.pub:39513';
+const MT5_BRIDGE_URL = process.env.MT5_BRIDGE_URL || 'http://bore.pub:32658';
 
 const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
 let isRunning = false;
@@ -19,7 +19,7 @@ const AUTO_TRADE_CONFIG = {
   enabled: true,
   maxDailyTrades: 10,
   positionSize: 0.01,
-  minConfidence: 35,
+  minConfidence: 25,
 };
 
 let dailyTradeCount = 0;
@@ -113,11 +113,9 @@ async function analyzeAndExecute() {
         const now = Date.now();
         const lastSent = lastSignalTime[`${symbol}_${signal.action}`] || 0;
         
-        // Only send same signal every 30 minutes
         if (now - lastSent > 1800000) {
           lastSignalTime[`${symbol}_${signal.action}`] = now;
           
-          // Try to execute on MT5
           let tradeExecuted = false;
           if (AUTO_TRADE_CONFIG.enabled && dailyTradeCount < AUTO_TRADE_CONFIG.maxDailyTrades) {
             tradeExecuted = await executeTradeOnMT5(
@@ -134,7 +132,6 @@ async function analyzeAndExecute() {
             }
           }
           
-          // Send Telegram alert (always)
           await sendTelegramAlert(
             signal.symbol,
             signal.action,
@@ -156,7 +153,7 @@ async function runAnalysisLoop() {
   if (!isRunning) return;
   await analyzeAndExecute();
   if (isRunning) {
-    intervalId = setTimeout(runAnalysisLoop, 60000);
+    intervalId = setTimeout(runAnalysisLoop, 30000); // Check every 30 seconds
   }
 }
 
@@ -173,7 +170,7 @@ export async function POST(request: Request) {
       `✅ MT5 Bridge: ${MT5_BRIDGE_URL}\n` +
       `✅ Auto-trade enabled\n` +
       `✅ Max ${AUTO_TRADE_CONFIG.maxDailyTrades} trades/day\n` +
-      `✅ Signals will be executed on MT5 automatically`);
+      `✅ Signals will be sent every 30 seconds`);
     
     await runAnalysisLoop();
     return NextResponse.json({ success: true, message: 'Auto-trade started' });
@@ -187,7 +184,6 @@ export async function POST(request: Request) {
   }
   
   if (action === 'test') {
-    // Test MT5 bridge connection
     try {
       const response = await fetch(`${MT5_BRIDGE_URL}/health`);
       const bridgeStatus = await response.json();
@@ -196,6 +192,43 @@ export async function POST(request: Request) {
       await telegramBot.sendMessage(`❌ *MT5 Bridge Test Failed*\n\nBridge not reachable at ${MT5_BRIDGE_URL}\nCheck your phone bridge is running.`);
     }
     return NextResponse.json({ success: true });
+  }
+  
+  if (action === 'force') {
+    const testSignal = {
+      symbol: 'EUR/USD',
+      action: 'BUY',
+      price: 1.0892,
+      stopLoss: 1.0860,
+      takeProfit: 1.0950,
+      confidence: 85,
+      volume: 0.01
+    };
+    
+    try {
+      await fetch(`${MT5_BRIDGE_URL}/trade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testSignal)
+      });
+      
+      await telegramBot.sendMessage(
+        '🔴 *FORCE TEST SIGNAL*\n\n' +
+        'This is a MANUAL test signal to verify your bot is working.\n\n' +
+        '*Symbol:* EUR/USD\n' +
+        '*Action:* BUY\n' +
+        '*Price:* 1.08920\n' +
+        '*Stop Loss:* 1.08600\n' +
+        '*Take Profit:* 1.09500\n\n' +
+        '✅ If you see this, your bot is configured correctly!\n' +
+        '📱 Check your Termux bridge - you should see the signal received.'
+      );
+      
+      return NextResponse.json({ success: true, message: 'Force test signal sent' });
+    } catch (error) {
+      await telegramBot.sendMessage('❌ *Force Test Failed*\n\nCould not send signal to bridge.');
+      return NextResponse.json({ success: false, error: String(error) });
+    }
   }
   
   return NextResponse.json({ running: isRunning });
