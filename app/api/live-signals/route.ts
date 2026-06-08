@@ -13,8 +13,8 @@ const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
 let isRunning = false;
 let intervalId: NodeJS.Timeout | null = null;
 let lastSignalTime: { [key: string]: number } = {};
+let lastForceSignalTime = 0;
 
-// Auto-trade settings
 const AUTO_TRADE_CONFIG = {
   enabled: true,
   maxDailyTrades: 10,
@@ -25,7 +25,6 @@ const AUTO_TRADE_CONFIG = {
 let dailyTradeCount = 0;
 let lastTradeDate = new Date().toDateString();
 
-// Get REAL price from Twelve Data API
 async function getRealPrice(symbol: string): Promise<number | null> {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   if (!apiKey) return null;
@@ -40,7 +39,6 @@ async function getRealPrice(symbol: string): Promise<number | null> {
   }
 }
 
-// Execute trade on MT5 via bridge
 async function executeTradeOnMT5(symbol: string, action: 'BUY' | 'SELL', price: number, stopLoss: number, takeProfit: number): Promise<boolean> {
   try {
     const response = await fetch(`${MT5_BRIDGE_URL}/trade`, {
@@ -55,7 +53,6 @@ async function executeTradeOnMT5(symbol: string, action: 'BUY' | 'SELL', price: 
         volume: AUTO_TRADE_CONFIG.positionSize
       })
     });
-    
     const result = await response.json();
     return result.success === true;
   } catch (error) {
@@ -64,11 +61,9 @@ async function executeTradeOnMT5(symbol: string, action: 'BUY' | 'SELL', price: 
   }
 }
 
-// Send Telegram alert
 async function sendTelegramAlert(symbol: string, action: 'BUY' | 'SELL', price: number, stopLoss: number, takeProfit: number, confidence: number, executed: boolean) {
   const emoji = action === 'BUY' ? '🟢' : '🔴';
   const trendEmoji = action === 'BUY' ? '📈' : '📉';
-  
   const statusEmoji = executed ? '✅' : '⚠️';
   const statusText = executed ? 'EXECUTED on MT5' : 'Signal Only (Bridge offline)';
   
@@ -80,12 +75,11 @@ async function sendTelegramAlert(symbol: string, action: 'BUY' | 'SELL', price: 
     `*Take Profit:* ${takeProfit.toFixed(5)}\n` +
     `*Confidence:* ${confidence}%\n\n` +
     `${statusEmoji} *Trade Status:* ${statusText}\n\n` +
-    `🤖 Bot: ForexPulse PRO`;
+    `🤖 ForexPulse PRO`;
   
   await telegramBot.sendMessage(message);
 }
 
-// Reset daily counter
 function checkDailyReset() {
   const today = new Date().toDateString();
   if (today !== lastTradeDate) {
@@ -98,7 +92,6 @@ async function analyzeAndExecute() {
   if (!isRunning) return;
   
   checkDailyReset();
-  
   console.log(`[${new Date().toLocaleTimeString()}] 📊 Analyzing markets...`);
   
   for (const symbol of symbols) {
@@ -107,10 +100,19 @@ async function analyzeAndExecute() {
       if (!realPrice) continue;
       
       tradingEngine.addPrice(symbol, realPrice);
-      const signal = tradingEngine.analyze(symbol, realPrice);
+      let signal = tradingEngine.analyze(symbol, realPrice);
+      
+      // Force a signal every 2 minutes for testing
+      const now = Date.now();
+      if (signal.action === 'HOLD' && now - lastForceSignalTime > 120000) {
+        lastForceSignalTime = now;
+        signal.action = Math.random() > 0.5 ? 'BUY' : 'SELL';
+        signal.confidence = 70;
+        signal.reason = '🔴 FORCE TEST SIGNAL - Demo mode active';
+        console.log(`🔴 FORCED TEST SIGNAL: ${signal.action} ${symbol}`);
+      }
       
       if (signal.action !== 'HOLD' && signal.confidence >= AUTO_TRADE_CONFIG.minConfidence) {
-        const now = Date.now();
         const lastSent = lastSignalTime[`${symbol}_${signal.action}`] || 0;
         
         if (now - lastSent > 1800000) {
@@ -125,7 +127,6 @@ async function analyzeAndExecute() {
               signal.stopLoss,
               signal.takeProfit
             );
-            
             if (tradeExecuted) {
               dailyTradeCount++;
               console.log(`✅ AUTO-TRADE: ${signal.action} ${signal.symbol} (Day #${dailyTradeCount})`);
@@ -141,6 +142,7 @@ async function analyzeAndExecute() {
             signal.confidence,
             tradeExecuted
           );
+          console.log(`📤 SIGNAL SENT: ${signal.action} ${signal.symbol}`);
         }
       }
     } catch (error) {
@@ -153,11 +155,10 @@ async function runAnalysisLoop() {
   if (!isRunning) return;
   await analyzeAndExecute();
   if (isRunning) {
-    intervalId = setTimeout(runAnalysisLoop, 30000); // Check every 30 seconds
+    intervalId = setTimeout(runAnalysisLoop, 30000);
   }
 }
 
-// API Routes
 export async function POST(request: Request) {
   const { action } = await request.json();
   
@@ -169,8 +170,8 @@ export async function POST(request: Request) {
       `✅ Bot analyzing REAL market data\n` +
       `✅ MT5 Bridge: ${MT5_BRIDGE_URL}\n` +
       `✅ Auto-trade enabled\n` +
-      `✅ Max ${AUTO_TRADE_CONFIG.maxDailyTrades} trades/day\n` +
-      `✅ Signals will be sent every 30 seconds`);
+      `✅ FORCE MODE: Demo signals every 2 minutes\n` +
+      `✅ Max ${AUTO_TRADE_CONFIG.maxDailyTrades} trades/day`);
     
     await runAnalysisLoop();
     return NextResponse.json({ success: true, message: 'Auto-trade started' });
@@ -189,7 +190,7 @@ export async function POST(request: Request) {
       const bridgeStatus = await response.json();
       await telegramBot.sendMessage(`🔔 *MT5 Bridge Test*\n\n✅ Bridge is ONLINE\n📍 URL: ${MT5_BRIDGE_URL}\n📊 Status: ${JSON.stringify(bridgeStatus)}`);
     } catch (error) {
-      await telegramBot.sendMessage(`❌ *MT5 Bridge Test Failed*\n\nBridge not reachable at ${MT5_BRIDGE_URL}\nCheck your phone bridge is running.`);
+      await telegramBot.sendMessage(`❌ *MT5 Bridge Test Failed*\n\nBridge not reachable at ${MT5_BRIDGE_URL}`);
     }
     return NextResponse.json({ success: true });
   }
@@ -214,19 +215,16 @@ export async function POST(request: Request) {
       
       await telegramBot.sendMessage(
         '🔴 *FORCE TEST SIGNAL*\n\n' +
-        'This is a MANUAL test signal to verify your bot is working.\n\n' +
+        'Demo signal sent to bridge!\n\n' +
         '*Symbol:* EUR/USD\n' +
         '*Action:* BUY\n' +
         '*Price:* 1.08920\n' +
         '*Stop Loss:* 1.08600\n' +
         '*Take Profit:* 1.09500\n\n' +
-        '✅ If you see this, your bot is configured correctly!\n' +
-        '📱 Check your Termux bridge - you should see the signal received.'
+        '✅ Check your Termux bridge - you should see the signal.'
       );
-      
-      return NextResponse.json({ success: true, message: 'Force test signal sent' });
+      return NextResponse.json({ success: true });
     } catch (error) {
-      await telegramBot.sendMessage('❌ *Force Test Failed*\n\nCould not send signal to bridge.');
       return NextResponse.json({ success: false, error: String(error) });
     }
   }
