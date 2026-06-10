@@ -40,6 +40,16 @@ interface Position {
   mt5Ticket?: number;
 }
 
+interface NewsItem {
+  id: string;
+  headline: string;
+  currency: string;
+  sentiment: 'hawkish' | 'dovish';
+  confidence: number;
+  timestamp: Date;
+  source: string;
+}
+
 interface TradeJournal {
   id: string;
   symbol: string;
@@ -201,7 +211,6 @@ export default function Home() {
 
   // Update market sentiment based on current prices
   const updateMarketSentiment = () => {
-    // Simulated sentiment analysis
     const eurPrice = positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892;
     const rsiValue = 50 + (Math.random() - 0.5) * 40;
     const sentiment: MarketSentiment = {
@@ -213,6 +222,12 @@ export default function Home() {
       volumeSignal: 'Average'
     };
     setMarketSentiment(sentiment);
+  };
+
+  // Toggle bot function
+  const toggleBot = () => {
+    setBotRunning(!botRunning);
+    toast.success(botRunning ? 'Signal bot stopped' : 'Signal bot started - you will receive alerts on Telegram');
   };
 
   // Live price updates
@@ -277,10 +292,8 @@ export default function Home() {
       const strength = getSignalStrength(randomSignal.confidence, randomSignal.strategies);
       const positionSize = calculatePositionSize(accountBalance, riskPercent, 30);
       
-      // Play sound notification
       playSignalSound();
       
-      // Send to Telegram with enhanced info
       const enhancedMessage = `${randomSignal.action === 'BUY' ? '🟢📈' : '🔴📉'} *${randomSignal.action} SIGNAL* ${randomSignal.action === 'BUY' ? '📈🟢' : '📉🔴'}\n\n` +
         `*Symbol:* ${randomSignal.symbol}\n` +
         `*Action:* ${randomSignal.action}\n` +
@@ -389,7 +402,7 @@ export default function Home() {
               <button onClick={() => setShowRiskCalculator(!showRiskCalculator)} className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
                 <Percent className="w-4 h-4" /> Risk Calc
               </button>
-              <button onClick={() => setShowJournalModal(true)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
+              <button onClick={() => setShowJournalModal(!showJournalModal)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
                 <BookOpen className="w-4 h-4" /> Journal
               </button>
               <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-all ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
@@ -828,4 +841,4 @@ export default function Home() {
       )}
     </div>
   );
-      }
+  }
