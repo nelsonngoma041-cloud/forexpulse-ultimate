@@ -7,13 +7,11 @@ import {
   TrendingUp, TrendingDown, Shield, Wifi, WifiOff, 
   DollarSign, ChevronRight, ChevronLeft, Target, Radar, Download,
   BarChart3, TrendingUp as TrendingUpIcon, Award, Star, Zap,
-  AlertTriangle, CheckCircle, Clock, Calendar, BookOpen, Volume2,
-  PieChart, Percent, Sparkles, Bell, Eye, EyeOff, Save, Trash2
+  Clock, BookOpen, Volume2, PieChart, Percent
 } from "lucide-react";
 import { 
   AreaChart, Area, BarChart, Bar, 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, PieChart as RePieChart, Pie, Legend
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell 
 } from "recharts";
 import { TelegramAlertBot, TradeAlert } from './lib/telegram-alerts';
 import { AlphaVantageAPI } from './lib/broker-api';
@@ -37,7 +35,6 @@ interface Position {
   stopLoss: number;
   takeProfit: number;
   frozen: boolean;
-  mt5Ticket?: number;
 }
 
 interface NewsItem {
@@ -60,25 +57,9 @@ interface TradeJournal {
   entryTime: Date;
   exitTime: Date;
   notes: string;
-  screenshot?: string;
 }
 
-interface MarketSentiment {
-  overall: 'Bullish' | 'Bearish' | 'Neutral';
-  percentage: number;
-  rsiSignal: string;
-  macdSignal: string;
-  trendSignal: string;
-  volumeSignal: string;
-}
-
-interface SignalStrength {
-  level: 'Weak' | 'Good' | 'Strong' | 'Excellent';
-  color: string;
-  confidence: number;
-  recommendation: string;
-}
-
+// ============ HELPER FUNCTIONS ============
 const calculatePnL = (position: Position, currentPrice: number): number => {
   if (position.direction === 'LONG') {
     return (currentPrice - position.entryPrice) * 10000 * position.volume;
@@ -108,18 +89,6 @@ const getZambiaTradingHours = () => {
   }
 };
 
-const getSignalStrength = (confidence: number, agreeingStrategies: number): SignalStrength => {
-  if (confidence >= 85 && agreeingStrategies >= 4) {
-    return { level: 'Excellent', color: 'emerald', confidence, recommendation: 'Execute immediately - high probability setup' };
-  } else if (confidence >= 70 && agreeingStrategies >= 3) {
-    return { level: 'Strong', color: 'green', confidence, recommendation: 'Good setup - execute with confidence' };
-  } else if (confidence >= 50 && agreeingStrategies >= 2) {
-    return { level: 'Good', color: 'yellow', confidence, recommendation: 'Valid signal - but confirm with price action' };
-  } else {
-    return { level: 'Weak', color: 'red', confidence, recommendation: 'Wait for confirmation or skip' };
-  }
-};
-
 export default function Home() {
   const [botRunning, setBotRunning] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -132,18 +101,12 @@ export default function Home() {
   // Trade Journal State
   const [tradeJournal, setTradeJournal] = useState<TradeJournal[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
-  const [currentTrade, setCurrentTrade] = useState<any>(null);
   const [journalNotes, setJournalNotes] = useState('');
   
   // Account Settings
   const [accountBalance, setAccountBalance] = useState(1000);
   const [riskPercent, setRiskPercent] = useState(1);
   const [showRiskCalculator, setShowRiskCalculator] = useState(false);
-  
-  // Market Sentiment
-  const [marketSentiment, setMarketSentiment] = useState<MarketSentiment>({
-    overall: 'Neutral', percentage: 50, rsiSignal: 'Loading...', macdSignal: 'Loading...', trendSignal: 'Loading...', volumeSignal: 'Loading...'
-  });
   
   // Sound Notifications
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -167,7 +130,6 @@ export default function Home() {
     { time: '9:30', equity: 10000 }, { time: '10:00', equity: 10150 }, 
     { time: '10:30', equity: 10200 }, { time: '11:00', equity: 10180 }, 
     { time: '11:30', equity: 10300 }, { time: '12:00', equity: 10250 },
-    { time: '12:30', equity: 10450 }, { time: '13:00', equity: 10500 },
   ]);
 
   const totalPnL = positions.reduce((sum, p) => sum + p.pnl, 0);
@@ -209,22 +171,7 @@ export default function Home() {
     return { totalTrades, winningTrades, totalPnL, winRate };
   };
 
-  // Update market sentiment based on current prices
-  const updateMarketSentiment = () => {
-    const eurPrice = positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892;
-    const rsiValue = 50 + (Math.random() - 0.5) * 40;
-    const sentiment: MarketSentiment = {
-      overall: rsiValue > 55 ? 'Bullish' : (rsiValue < 45 ? 'Bearish' : 'Neutral'),
-      percentage: rsiValue,
-      rsiSignal: rsiValue > 70 ? 'Overbought' : (rsiValue < 30 ? 'Oversold' : 'Neutral'),
-      macdSignal: eurPrice > 1.09 ? 'Bullish' : 'Bearish',
-      trendSignal: eurPrice > 1.0850 ? 'Uptrend' : 'Downtrend',
-      volumeSignal: 'Average'
-    };
-    setMarketSentiment(sentiment);
-  };
-
-  // Toggle bot function
+  // Toggle bot
   const toggleBot = () => {
     setBotRunning(!botRunning);
     toast.success(botRunning ? 'Signal bot stopped' : 'Signal bot started - you will receive alerts on Telegram');
@@ -235,8 +182,6 @@ export default function Home() {
     if (!botRunning) return;
     
     let isMounted = true;
-    updateMarketSentiment();
-    const sentimentInterval = setInterval(updateMarketSentiment, 30000);
     
     const fetchPrices = async () => {
       const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
@@ -272,7 +217,6 @@ export default function Home() {
     return () => {
       isMounted = false;
       clearInterval(interval);
-      clearInterval(sentimentInterval);
     };
   }, [botRunning, useLiveData]);
 
@@ -283,18 +227,17 @@ export default function Home() {
     const interval = setInterval(() => {
       const tradingHours = getZambiaTradingHours();
       const signals = [
-        { symbol: 'EUR/USD', action: 'BUY', price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892, stopLoss: 1.0860, takeProfit: 1.0950, confidence: 85, strategies: 4 },
-        { symbol: 'GBP/USD', action: 'BUY', price: positions.find(p => p.symbol === 'GBP/USD')?.currentPrice || 1.2715, stopLoss: 1.2680, takeProfit: 1.2780, confidence: 72, strategies: 3 },
-        { symbol: 'USD/JPY', action: 'SELL', price: positions.find(p => p.symbol === 'USD/JPY')?.currentPrice || 157.85, stopLoss: 158.50, takeProfit: 156.50, confidence: 68, strategies: 2 },
+        { symbol: 'EUR/USD', action: 'BUY', price: positions.find(p => p.symbol === 'EUR/USD')?.currentPrice || 1.0892, stopLoss: 1.0860, takeProfit: 1.0950, confidence: 85 },
+        { symbol: 'GBP/USD', action: 'BUY', price: positions.find(p => p.symbol === 'GBP/USD')?.currentPrice || 1.2715, stopLoss: 1.2680, takeProfit: 1.2780, confidence: 72 },
+        { symbol: 'USD/JPY', action: 'SELL', price: positions.find(p => p.symbol === 'USD/JPY')?.currentPrice || 157.85, stopLoss: 158.50, takeProfit: 156.50, confidence: 68 },
       ];
       
       const randomSignal = signals[Math.floor(Math.random() * signals.length)];
-      const strength = getSignalStrength(randomSignal.confidence, randomSignal.strategies);
       const positionSize = calculatePositionSize(accountBalance, riskPercent, 30);
       
       playSignalSound();
       
-      const enhancedMessage = `${randomSignal.action === 'BUY' ? '🟢📈' : '🔴📉'} *${randomSignal.action} SIGNAL* ${randomSignal.action === 'BUY' ? '📈🟢' : '📉🔴'}\n\n` +
+      const message = `${randomSignal.action === 'BUY' ? '🟢📈' : '🔴📉'} *${randomSignal.action} SIGNAL* ${randomSignal.action === 'BUY' ? '📈🟢' : '📉🔴'}\n\n` +
         `*Symbol:* ${randomSignal.symbol}\n` +
         `*Action:* ${randomSignal.action}\n` +
         `*Entry:* ${randomSignal.price.toFixed(5)}\n` +
@@ -302,32 +245,26 @@ export default function Home() {
         `*Take Profit:* ${randomSignal.takeProfit.toFixed(5)}\n` +
         `*Confidence:* ${randomSignal.confidence}%\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `💰 *POSITION SIZE CALCULATOR*\n` +
+        `💰 *POSITION SIZE*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `Account Balance: $${accountBalance}\n` +
+        `Account: $${accountBalance}\n` +
         `Risk: ${riskPercent}% = $${(accountBalance * riskPercent / 100).toFixed(2)}\n` +
-        `Stop Loss: 30 pips\n` +
-        `👉 *Recommended Size: ${positionSize.toFixed(3)} lots*\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `📊 *SIGNAL STRENGTH*: ${strength.level}\n` +
-        `💡 ${strength.recommendation}\n\n` +
+        `👉 *Recommended: ${positionSize.toFixed(3)} lots*\n\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `✅ *PRE-TRADE CHECKLIST*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-        `[ ] Trading hours: ${tradingHours.emoji} ${tradingHours.message}\n` +
+        `[ ] ${tradingHours.emoji} ${tradingHours.message}\n` +
         `[ ] Position size: ${positionSize.toFixed(3)} lots\n` +
-        `[ ] Stop Loss set at ${randomSignal.stopLoss.toFixed(5)}\n` +
-        `[ ] Take Profit set at ${randomSignal.takeProfit.toFixed(5)}\n` +
-        `[ ] Market sentiment: ${marketSentiment.overall}\n\n` +
-        `⏰ Zambia time: ${new Date().toLocaleTimeString()}\n` +
-        `📈 ${randomSignal.strategies} strategies agree on this signal`;
+        `[ ] Stop Loss at ${randomSignal.stopLoss.toFixed(5)}\n` +
+        `[ ] Take Profit at ${randomSignal.takeProfit.toFixed(5)}\n\n` +
+        `⏰ Zambia time: ${new Date().toLocaleTimeString()}`;
       
-      telegramBot.sendMessage(enhancedMessage);
-      toast.success(`📊 ${randomSignal.action} signal sent to Telegram!`);
+      telegramBot.sendMessage(message);
+      toast.success(`📊 ${randomSignal.action} signal sent!`);
     }, 60000);
     
     return () => clearInterval(interval);
-  }, [botRunning, positions, accountBalance, riskPercent, marketSentiment, soundEnabled]);
+  }, [botRunning, positions, accountBalance, riskPercent, soundEnabled]);
 
   const journalStats = getJournalStats();
 
@@ -335,7 +272,6 @@ export default function Home() {
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950">
       <Toaster position="top-right" />
       
-      {/* Audio for notifications */}
       <audio ref={audioRef} src="https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3" preload="auto" />
       
       {/* Sidebar */}
@@ -352,12 +288,11 @@ export default function Home() {
           </button>
         </div>
         <nav className="p-3">
-          {['dashboard', 'journal', 'calculator', 'sentiment', 'settings'].map(tab => (
+          {['dashboard', 'journal', 'calculator', 'settings'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 transition-all ${activeTab === tab ? 'bg-gradient-to-r from-emerald-500/20 to-blue-500/20 text-white border-l-2 border-emerald-400' : 'text-gray-400 hover:bg-gray-800/50'}`}>
               {tab === 'dashboard' && <Activity className="w-4 h-4" />}
               {tab === 'journal' && <BookOpen className="w-4 h-4" />}
               {tab === 'calculator' && <Percent className="w-4 h-4" />}
-              {tab === 'sentiment' && <PieChart className="w-4 h-4" />}
               {tab === 'settings' && <Settings className="w-4 h-4" />}
               {!sidebarCollapsed && <span className="capitalize text-sm">{tab}</span>}
             </button>
@@ -370,7 +305,7 @@ export default function Home() {
               {!sidebarCollapsed && (
                 <div className="flex-1">
                   <p className="text-xs text-gray-400">{botRunning ? 'Signal Active' : 'Standby'}</p>
-                  <p className="text-[10px] text-gray-500">Manual Trading Mode</p>
+                  <p className="text-[10px] text-gray-500">Manual Mode</p>
                 </div>
               )}
             </div>
@@ -383,7 +318,7 @@ export default function Home() {
         <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-950/95 backdrop-blur-xl px-6 py-3">
           <div className="flex justify-between items-center flex-wrap gap-2">
             <div className="flex items-center gap-3">
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${wsConnected ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'}`}>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                 <Wifi className="w-3 h-3 text-emerald-400" />
                 <span className="text-xs text-emerald-400">{useLiveData ? 'Live Data' : 'Demo Mode'}</span>
               </div>
@@ -394,7 +329,7 @@ export default function Home() {
                 📊 Chart
               </button>
               <button onClick={() => setSoundEnabled(!soundEnabled)} className={`text-xs px-2 py-1 rounded ${soundEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}`}>
-                {soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
+                {soundEnabled ? '🔊 On' : '🔇 Off'}
               </button>
             </div>
             
@@ -405,7 +340,7 @@ export default function Home() {
               <button onClick={() => setShowJournalModal(!showJournalModal)} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
                 <BookOpen className="w-4 h-4" /> Journal
               </button>
-              <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-all ${botRunning ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'}`}>
+              <button onClick={toggleBot} className={`px-4 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-all ${botRunning ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
                 {botRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                 {botRunning ? 'Signals Active' : 'Start Signals'}
               </button>
@@ -418,7 +353,7 @@ export default function Home() {
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               {/* Trading Hours Banner */}
-              <div className={`rounded-xl p-4 ${getZambiaTradingHours().quality === 'Best' ? 'bg-emerald-500/20 border border-emerald-500/30' : getZambiaTradingHours().quality === 'Good' ? 'bg-blue-500/20 border border-blue-500/30' : 'bg-yellow-500/20 border border-yellow-500/30'}`}>
+              <div className={`rounded-xl p-4 ${getZambiaTradingHours().quality === 'Best' ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-blue-500/20 border border-blue-500/30'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Clock className="w-5 h-5" />
@@ -436,11 +371,7 @@ export default function Home() {
                 <div>
                   <div className="flex gap-2 mb-3">
                     {['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD'].map(sym => (
-                      <button
-                        key={sym}
-                        onClick={() => setSelectedSymbol(sym)}
-                        className={`px-3 py-1 rounded text-xs ${selectedSymbol === sym ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-800 text-gray-400'}`}
-                      >
+                      <button key={sym} onClick={() => setSelectedSymbol(sym)} className={`px-3 py-1 rounded text-xs ${selectedSymbol === sym ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-800 text-gray-400'}`}>
                         {sym}
                       </button>
                     ))}
@@ -467,7 +398,7 @@ export default function Home() {
                   {frozenCount > 0 && <div className="text-xs text-yellow-500">{frozenCount} frozen</div>}
                 </div>
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                  <div className="text-xs text-gray-400">Signal Status</div>
+                  <div className="text-xs text-gray-400">Bot Status</div>
                   <div className="flex items-center gap-2 mt-1">
                     <div className={`w-2 h-2 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse' : 'bg-gray-500'}`} />
                     <span className="text-sm">{botRunning ? 'Active' : 'Standby'}</span>
@@ -476,35 +407,6 @@ export default function Home() {
                 <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
                   <div className="text-xs text-gray-400">Account Balance</div>
                   <div className="text-xl font-bold text-blue-400">${accountBalance}</div>
-                </div>
-              </div>
-
-              {/* Market Sentiment Widget */}
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-4">
-                <h3 className="text-sm text-gray-400 mb-3 flex items-center gap-2"><PieChart className="w-4 h-4 text-blue-400" /> Market Sentiment</h3>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500">Overall</div>
-                    <div className={`text-lg font-bold ${marketSentiment.overall === 'Bullish' ? 'text-emerald-400' : marketSentiment.overall === 'Bearish' ? 'text-red-400' : 'text-yellow-400'}`}>
-                      {marketSentiment.overall}
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500">RSI</div>
-                    <div className="text-sm">{marketSentiment.rsiSignal}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500">MACD</div>
-                    <div className="text-sm">{marketSentiment.macdSignal}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500">Trend</div>
-                    <div className="text-sm">{marketSentiment.trendSignal}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs text-gray-500">Volume</div>
-                    <div className="text-sm">{marketSentiment.volumeSignal}</div>
-                  </div>
                 </div>
               </div>
 
@@ -536,7 +438,7 @@ export default function Home() {
                         <th className="px-4 py-2 text-left">Entry</th><th className="px-4 py-2 text-left">Current</th>
                         <th className="px-4 py-2 text-left">P&L</th><th className="px-4 py-2 text-left">P&L %</th>
                         <th className="px-4 py-2 text-left">SL/TP</th><th className="px-4 py-2 text-left">Status</th>
-                      </td>
+                      </tr>
                     </thead>
                     <tbody>
                       {positions.map(p => (
@@ -583,73 +485,67 @@ export default function Home() {
             </div>
           )}
 
-          {/* TRADE JOURNAL TAB */}
+          {/* JOURNAL TAB */}
           {activeTab === 'journal' && (
-            <div className="space-y-6">
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
-                <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><BookOpen className="w-5 h-5 text-emerald-400" /> Trade Journal</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Total Trades</div>
-                    <div className="text-2xl font-bold text-blue-400">{journalStats.totalTrades}</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Winning Trades</div>
-                    <div className="text-2xl font-bold text-emerald-400">{journalStats.winningTrades}</div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Total P&L</div>
-                    <div className={`text-2xl font-bold ${journalStats.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      ${journalStats.totalPnL.toFixed(0)}
-                    </div>
-                  </div>
-                  <div className="p-3 rounded-lg bg-gray-800/30 text-center">
-                    <div className="text-xs text-gray-400">Win Rate</div>
-                    <div className="text-2xl font-bold text-purple-400">{journalStats.winRate.toFixed(0)}%</div>
+            <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
+              <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><BookOpen className="w-5 h-5 text-emerald-400" /> Trade Journal</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                  <div className="text-xs text-gray-400">Total Trades</div>
+                  <div className="text-2xl font-bold text-blue-400">{journalStats.totalTrades}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                  <div className="text-xs text-gray-400">Winning Trades</div>
+                  <div className="text-2xl font-bold text-emerald-400">{journalStats.winningTrades}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                  <div className="text-xs text-gray-400">Total P&L</div>
+                  <div className={`text-2xl font-bold ${journalStats.totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    ${journalStats.totalPnL.toFixed(0)}
                   </div>
                 </div>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-800/50">
-                      <tr className="text-gray-400">
-                        <th className="px-4 py-2 text-left">Date</th>
-                        <th className="px-4 py-2 text-left">Symbol</th>
-                        <th className="px-4 py-2 text-left">Action</th>
-                        <th className="px-4 py-2 text-left">Entry</th>
-                        <th className="px-4 py-2 text-left">Exit</th>
-                        <th className="px-4 py-2 text-left">P&L</th>
-                        <th className="px-4 py-2 text-left">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tradeJournal.length === 0 ? (
-                        <tr><td colSpan={7} className="text-center py-8 text-gray-500">No trades recorded yet. Click "Journal" to save trades.</td></tr>
-                      ) : (
-                        tradeJournal.map(trade => (
-                          <tr key={trade.id} className="border-b border-gray-800/50">
-                            <td className="px-4 py-3 text-xs">{new Date(trade.entryTime).toLocaleString()}</td>
-                            <td className="px-4 py-3">{trade.symbol}</td>
-                            <td className="px-4 py-3">
-                              <span className={`rounded px-2 py-0.5 text-xs ${trade.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                                {trade.action}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 font-mono">{trade.entryPrice.toFixed(5)}</td>
-                            <td className="px-4 py-3 font-mono">{trade.exitPrice.toFixed(5)}</td>
-                            <td className={`px-4 py-3 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)}</td>
-                            <td className="px-4 py-3 text-xs truncate max-w-[150px]">{trade.notes}</td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                <div className="p-3 rounded-lg bg-gray-800/30 text-center">
+                  <div className="text-xs text-gray-400">Win Rate</div>
+                  <div className="text-2xl font-bold text-purple-400">{journalStats.winRate.toFixed(0)}%</div>
                 </div>
+              </div>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-800/50">
+                    <tr className="text-gray-400">
+                      <th className="px-4 py-2 text-left">Date</th>
+                      <th className="px-4 py-2 text-left">Symbol</th>
+                      <th className="px-4 py-2 text-left">Action</th>
+                      <th className="px-4 py-2 text-left">Entry</th>
+                      <th className="px-4 py-2 text-left">Exit</th>
+                      <th className="px-4 py-2 text-left">P&L</th>
+                      <th className="px-4 py-2 text-left">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tradeJournal.length === 0 ? (
+                      <tr><td colSpan={7} className="text-center py-8 text-gray-500">No trades recorded yet.</td></tr>
+                    ) : (
+                      tradeJournal.map(trade => (
+                        <tr key={trade.id} className="border-b border-gray-800/50">
+                          <td className="px-4 py-3 text-xs">{new Date(trade.entryTime).toLocaleString()}</td>
+                          <td className="px-4 py-3">{trade.symbol}</td>
+                          <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs ${trade.action === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{trade.action}</span></td>
+                          <td className="px-4 py-3 font-mono">{trade.entryPrice.toFixed(5)}</td>
+                          <td className="px-4 py-3 font-mono">{trade.exitPrice.toFixed(5)}</td>
+                          <td className={`px-4 py-3 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>${trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-xs truncate max-w-[150px]">{trade.notes}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
 
-          {/* RISK CALCULATOR TAB */}
+          {/* CALCULATOR TAB */}
           {activeTab === 'calculator' && (
             <div className="max-w-2xl mx-auto">
               <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
@@ -657,22 +553,11 @@ export default function Home() {
                 <div className="space-y-4">
                   <div>
                     <label className="text-sm text-gray-400">Account Balance ($)</label>
-                    <input 
-                      type="number" 
-                      value={accountBalance} 
-                      onChange={(e) => setAccountBalance(Number(e.target.value))}
-                      className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white"
-                    />
+                    <input type="number" value={accountBalance} onChange={(e) => setAccountBalance(Number(e.target.value))} className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white" />
                   </div>
                   <div>
                     <label className="text-sm text-gray-400">Risk Per Trade (%)</label>
-                    <input 
-                      type="number" 
-                      value={riskPercent} 
-                      onChange={(e) => setRiskPercent(Number(e.target.value))}
-                      step="0.5"
-                      className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white"
-                    />
+                    <input type="number" value={riskPercent} onChange={(e) => setRiskPercent(Number(e.target.value))} step="0.5" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white" />
                     <p className="text-xs text-gray-500 mt-1">Recommended: 1-2% per trade</p>
                   </div>
                   <div>
@@ -681,50 +566,8 @@ export default function Home() {
                   </div>
                   <div className="bg-emerald-500/10 rounded-lg p-4">
                     <div className="text-sm text-emerald-400 mb-2">Recommended Position Size:</div>
-                    <div className="text-3xl font-bold text-emerald-400">
-                      {calculatePositionSize(accountBalance, riskPercent, 30).toFixed(3)} lots
-                    </div>
-                    <div className="text-xs text-gray-500 mt-2">
-                      Risk amount: ${(accountBalance * riskPercent / 100).toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* MARKET SENTIMENT TAB */}
-          {activeTab === 'sentiment' && (
-            <div className="space-y-6">
-              <div className="rounded-xl bg-gray-900 border border-gray-800 p-6">
-                <h3 className="font-medium text-lg mb-4 flex items-center gap-2"><PieChart className="w-5 h-5 text-purple-400" /> Market Sentiment Analysis</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="text-center p-4 bg-gray-800/30 rounded-lg">
-                    <div className="text-4xl mb-2">{marketSentiment.overall === 'Bullish' ? '📈' : (marketSentiment.overall === 'Bearish' ? '📉' : '➡️')}</div>
-                    <div className="text-xl font-bold">{marketSentiment.overall}</div>
-                    <div className="text-xs text-gray-500">Overall Market</div>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex justify-between p-2 border-b border-gray-800">
-                      <span>RSI Signal:</span>
-                      <span className={marketSentiment.rsiSignal.includes('Oversold') ? 'text-emerald-400' : marketSentiment.rsiSignal.includes('Overbought') ? 'text-red-400' : 'text-yellow-400'}>
-                        {marketSentiment.rsiSignal}
-                      </span>
-                    </div>
-                    <div className="flex justify-between p-2 border-b border-gray-800">
-                      <span>MACD Signal:</span>
-                      <span className={marketSentiment.macdSignal === 'Bullish' ? 'text-emerald-400' : 'text-red-400'}>{marketSentiment.macdSignal}</span>
-                    </div>
-                    <div className="flex justify-between p-2 border-b border-gray-800">
-                      <span>Trend Signal:</span>
-                      <span className={marketSentiment.trendSignal === 'Uptrend' ? 'text-emerald-400' : marketSentiment.trendSignal === 'Downtrend' ? 'text-red-400' : 'text-yellow-400'}>
-                        {marketSentiment.trendSignal}
-                      </span>
-                    </div>
-                    <div className="flex justify-between p-2 border-b border-gray-800">
-                      <span>Volume Signal:</span>
-                      <span>{marketSentiment.volumeSignal}</span>
-                    </div>
+                    <div className="text-3xl font-bold text-emerald-400">{calculatePositionSize(accountBalance, riskPercent, 30).toFixed(3)} lots</div>
+                    <div className="text-xs text-gray-500 mt-2">Risk amount: ${(accountBalance * riskPercent / 100).toFixed(2)}</div>
                   </div>
                 </div>
               </div>
@@ -746,8 +589,8 @@ export default function Home() {
                     <span className={soundEnabled ? "text-green-400" : "text-red-400"}>{soundEnabled ? "🔊 Enabled" : "🔇 Disabled"}</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-800">
-                    <span className="text-gray-400">Manual Trading Mode:</span>
-                    <span className="text-blue-400">Active</span>
+                    <span className="text-gray-400">Trading Mode:</span>
+                    <span className="text-blue-400">Manual Signals</span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-400">Bot Status:</span>
@@ -765,34 +608,12 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
           <div className="bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
             <h3 className="text-lg font-bold mb-4">Save Trade to Journal</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-400">Notes</label>
-                <textarea 
-                  value={journalNotes}
-                  onChange={(e) => setJournalNotes(e.target.value)}
-                  className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white h-24"
-                  placeholder="Enter trade notes, lessons learned, etc."
-                />
-              </div>
-              <div className="flex gap-3">
-                <button 
-                  onClick={() => saveToJournal('EUR/USD', 'BUY', 1.0892, 1.0920, 28)}
-                  className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded-lg"
-                >
-                  Save as Profit
-                </button>
-                <button 
-                  onClick={() => saveToJournal('EUR/USD', 'BUY', 1.0892, 1.0870, -22)}
-                  className="flex-1 bg-red-500/20 text-red-400 py-2 rounded-lg"
-                >
-                  Save as Loss
-                </button>
-              </div>
-              <button onClick={() => setShowJournalModal(false)} className="w-full bg-gray-800 text-gray-400 py-2 rounded-lg">
-                Cancel
-              </button>
+            <textarea value={journalNotes} onChange={(e) => setJournalNotes(e.target.value)} className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2 text-white h-24" placeholder="Enter trade notes..." />
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => saveToJournal('EUR/USD', 'BUY', 1.0892, 1.0920, 28)} className="flex-1 bg-emerald-500/20 text-emerald-400 py-2 rounded-lg">Save Profit</button>
+              <button onClick={() => saveToJournal('EUR/USD', 'BUY', 1.0892, 1.0870, -22)} className="flex-1 bg-red-500/20 text-red-400 py-2 rounded-lg">Save Loss</button>
             </div>
+            <button onClick={() => setShowJournalModal(false)} className="w-full mt-3 bg-gray-800 text-gray-400 py-2 rounded-lg">Cancel</button>
           </div>
         </div>
       )}
@@ -802,43 +623,26 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
           <div className="bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-700">
             <h3 className="text-lg font-bold mb-4">Position Size Calculator</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm text-gray-400">Account Balance ($)</label>
-                <input 
-                  type="number" 
-                  value={accountBalance} 
-                  onChange={(e) => setAccountBalance(Number(e.target.value))}
-                  className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-400">Risk Per Trade (%)</label>
-                <input 
-                  type="number" 
-                  value={riskPercent} 
-                  onChange={(e) => setRiskPercent(Number(e.target.value))}
-                  step="0.5"
-                  className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-400">Stop Loss (pips)</label>
-                <input type="number" defaultValue="30" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
-              </div>
-              <div className="bg-emerald-500/10 rounded-lg p-4">
-                <div className="text-sm text-emerald-400 mb-2">Recommended Position Size:</div>
-                <div className="text-2xl font-bold text-emerald-400">
-                  {calculatePositionSize(accountBalance, riskPercent, 30).toFixed(3)} lots
-                </div>
-              </div>
-              <button onClick={() => setShowRiskCalculator(false)} className="w-full bg-emerald-500/20 text-emerald-400 py-2 rounded-lg">
-                Close
-              </button>
+            <div>
+              <label className="text-sm text-gray-400">Account Balance ($)</label>
+              <input type="number" value={accountBalance} onChange={(e) => setAccountBalance(Number(e.target.value))} className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
             </div>
+            <div className="mt-3">
+              <label className="text-sm text-gray-400">Risk Per Trade (%)</label>
+              <input type="number" value={riskPercent} onChange={(e) => setRiskPercent(Number(e.target.value))} step="0.5" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
+            </div>
+            <div className="mt-3">
+              <label className="text-sm text-gray-400">Stop Loss (pips)</label>
+              <input type="number" defaultValue="30" className="w-full mt-1 rounded bg-gray-800 border-gray-700 p-2" />
+            </div>
+            <div className="bg-emerald-500/10 rounded-lg p-4 mt-4">
+              <div className="text-sm text-emerald-400 mb-2">Recommended Position Size:</div>
+              <div className="text-3xl font-bold text-emerald-400">{calculatePositionSize(accountBalance, riskPercent, 30).toFixed(3)} lots</div>
+            </div>
+            <button onClick={() => setShowRiskCalculator(false)} className="w-full mt-4 bg-emerald-500/20 text-emerald-400 py-2 rounded-lg">Close</button>
           </div>
         </div>
       )}
     </div>
   );
-  }
+     }
