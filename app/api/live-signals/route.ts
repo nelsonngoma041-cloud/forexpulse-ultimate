@@ -1,267 +1,257 @@
 // app/api/live-signals/route.ts
 import { NextResponse } from 'next/server';
+import { tradingEngine, getPipMultiplier, getDecimals } from '@/app/lib/trading-engine';
 
-const TELEGRAM_TOKEN = '8798974385:AAFjbGdsC3qJVe0FwQ581nCPb0VBC_4m68Q';
-const TELEGRAM_CHAT_ID = '7724961440';
+// ─── Config ────────────────────────────────────────────────────────────────────
+// Env vars are read inside request handlers — NOT at module load time.
+// Reading them at the top level causes Vercel build failures because Next.js
+// evaluates route modules during `next build` before env vars are injected.
 
-async function sendTelegramMessage(message: string) {
-  try {
-    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML'
-      })
-    });
-    return await response.json();
-  } catch (error) {
-    console.error('Telegram error:', error);
-    return null;
+function getEnvVars(): { token: string; chatId: string } {
+  const token  = process.env.TELEGRAM_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    throw new Error(
+      'TELEGRAM_TOKEN and TELEGRAM_CHAT_ID must be set in Vercel → Settings → Environment Variables'
+    );
   }
+  return { token, chatId };
 }
 
-let isRunning = false;
-let intervalId: NodeJS.Timeout | null = null;
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
-// Real price ranges for each currency pair
-const currencyData = {
-  'EUR/USD': { price: 1.0892, minMove: 0.0001, volatility: 0.0005 },
-  'GBP/USD': { price: 1.2715, minMove: 0.0001, volatility: 0.0005 },
-  'USD/JPY': { price: 157.85, minMove: 0.01, volatility: 0.10 },
-  'AUD/USD': { price: 0.6645, minMove: 0.0001, volatility: 0.0004 },
-  'USD/CAD': { price: 1.3715, minMove: 0.0001, volatility: 0.0004 },
+type CurrencyPair = 'EURUSD' | 'GBPUSD' | 'USDJPY' | 'AUDUSD' | 'USDCAD';
+type BotAction = 'start' | 'stop' | 'test';
+
+// ─── Currency Data ─────────────────────────────────────────────────────────────
+
+const CURRENCY_PRICES: Record<CurrencyPair, number> = {
+  EURUSD: 1.08920,
+  GBPUSD: 1.27150,
+  USDJPY: 157.85,
+  AUDUSD: 0.66450,
+  USDCAD: 1.37150,
 };
 
-// Calculate Stop Loss and Take Profit based on ATR (Average True Range)
-function calculateSLTP(symbol: string, action: 'BUY' | 'SELL', currentPrice: number): { stopLoss: number; takeProfit: number; slPips: number; tpPips: number } {
-  const data = currencyData[symbol as keyof typeof currencyData] || currencyData['EUR/USD'];
-  const atr = data.volatility; // Simulated ATR
-  
-  // Use 1.5x ATR for Stop Loss, 2.5x ATR for Take Profit (1:1.5 risk/reward ratio)
-  const slDistance = atr * 1.5;
-  const tpDistance = atr * 3;
-  
-  let stopLoss: number;
-  let takeProfit: number;
-  let slPips: number;
-  let tpPips: number;
-  
-  if (action === 'BUY') {
-    stopLoss = currentPrice - slDistance;
-    takeProfit = currentPrice + tpDistance;
-    slPips = Math.round((currentPrice - stopLoss) * 10000);
-    tpPips = Math.round((takeProfit - currentPrice) * 10000);
-  } else {
-    stopLoss = currentPrice + slDistance;
-    takeProfit = currentPrice - tpDistance;
-    slPips = Math.round((stopLoss - currentPrice) * 10000);
-    tpPips = Math.round((currentPrice - takeProfit) * 10000);
-  }
-  
-  // Round to correct decimal places
-  const decimals = symbol === 'USD/JPY' ? 2 : 5;
-  return {
-    stopLoss: Number(stopLoss.toFixed(decimals)),
-    takeProfit: Number(takeProfit.toFixed(decimals)),
-    slPips,
-    tpPips
-  };
+const PAIRS = Object.keys(CURRENCY_PRICES) as CurrencyPair[];
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// Generate a professional trading signal
-function generateSignal() {
-  const symbols = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'AUD/USD', 'USD/CAD'];
-  const actions = ['BUY', 'SELL'];
-  
-  const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)];
-  const randomAction = actions[Math.floor(Math.random() * actions.length)];
-  const currentPrice = currencyData[randomSymbol as keyof typeof currencyData].price;
-  
-  // Add small random movement to price
-  const priceVariation = (Math.random() - 0.5) * 0.0003;
-  const entryPrice = currentPrice + priceVariation;
-  
-  const { stopLoss, takeProfit, slPips, tpPips } = calculateSLTP(randomSymbol, randomAction as 'BUY' | 'SELL', entryPrice);
-  
-  // Generate confidence based on market conditions
-  const confidence = Math.floor(Math.random() * 25) + 65; // 65-90%
-  
-  // Generate reason for the signal
-  const reasons = [
-    'RSI oversold condition detected',
-    'MACD bullish crossover',
-    'Price broke above resistance',
-    'Support level held strongly',
-    'Bullish divergence on RSI',
-    'Moving average golden cross',
-    'Breakout from consolidation',
-  ];
-  const bearishReasons = [
-    'RSI overbought condition detected',
-    'MACD bearish crossover',
-    'Price broke below support',
-    'Resistance level rejected price',
-    'Bearish divergence on RSI',
-    'Moving average death cross',
-    'Breakdown from consolidation',
-  ];
-  
-  const reasonList = randomAction === 'BUY' ? reasons : bearishReasons;
-  const reason = reasonList[Math.floor(Math.random() * reasonList.length)];
-  
-  return {
-    symbol: randomSymbol,
-    action: randomAction,
-    entryPrice: Number(entryPrice.toFixed(randomSymbol === 'USD/JPY' ? 2 : 5)),
-    stopLoss,
-    takeProfit,
-    slPips,
-    tpPips,
-    confidence,
-    reason
-  };
+/** Escape all MarkdownV2 special characters */
+function md(value: string | number): string {
+  return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
 
-// Calculate position size based on account risk
-function calculatePositionSize(accountBalance: number = 1000, riskPercent: number = 1, slPips: number): number {
-  const riskAmount = accountBalance * (riskPercent / 100);
-  // For forex, 1 lot = $10 per pip
-  const positionSize = riskAmount / (slPips * 10);
-  // Round to 2 decimal places, max 0.1 for demo
-  const rounded = Math.round(positionSize * 100) / 100;
-  return Math.min(rounded, 0.1);
-}
-
-// Get Zambia time (UTC+2)
 function getZambiaTime(): string {
-  const now = new Date();
-  const zambiaTime = new Date(now.getTime() + (2 * 60 * 60 * 1000));
-  return zambiaTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date().toLocaleTimeString('en-GB', {
+    timeZone: 'Africa/Lusaka',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 }
 
-// Get trading session recommendation
-function getTradingSession(): { quality: string; emoji: string; message: string } {
-  const now = new Date();
-  const zambiaHour = now.getUTCHours() + 2;
-  
-  if (zambiaHour >= 15 && zambiaHour < 19) {
-    return { quality: 'Best', emoji: '🔥', message: 'Prime trading window - HIGH liquidity' };
-  } else if (zambiaHour >= 10 && zambiaHour < 15) {
-    return { quality: 'Good', emoji: '✅', message: 'Good liquidity - recommended' };
-  } else if (zambiaHour >= 19 && zambiaHour < 22) {
-    return { quality: 'Low', emoji: '⚠️', message: 'Low liquidity - trade with caution' };
-  } else {
-    return { quality: 'Avoid', emoji: '😴', message: 'Avoid trading - low volume' };
+function getSessionInfo(): { emoji: string; message: string } {
+  const hour = parseInt(
+    new Date().toLocaleString('en-GB', { timeZone: 'Africa/Lusaka', hour: 'numeric', hour12: false }),
+    10
+  );
+  if (hour >= 15 && hour < 19) return { emoji: '🔥', message: 'Prime window — HIGH liquidity' };
+  if (hour >= 10 && hour < 15) return { emoji: '✅', message: 'Good liquidity — recommended' };
+  if (hour >= 19 && hour < 22) return { emoji: '⚠️', message: 'Low liquidity — trade carefully' };
+  return { emoji: '😴', message: 'Avoid trading — very low volume' };
+}
+
+/** Fixed-fractional position sizing. 1 std lot = $10/pip on most pairs. */
+function positionSize(balance: number, riskPct: number, slPips: number): number {
+  if (slPips <= 0) return 0.01;
+  const riskAmount = balance * (riskPct / 100);
+  return Math.min(Math.round((riskAmount / (slPips * 10)) * 100) / 100, 0.10);
+}
+
+// ─── Price simulation (seed engine with realistic price walk) ─────────────────
+
+function seedPrice(pair: CurrencyPair): number {
+  const base = CURRENCY_PRICES[pair];
+  const noise = (Math.random() - 0.5) * 0.002;
+  return Number((base + noise).toFixed(getDecimals(pair)));
+}
+
+function buildPriceHistory(pair: CurrencyPair, bars = 60): void {
+  const base = CURRENCY_PRICES[pair];
+  const pipSize = pair === 'USDJPY' ? 0.01 : 0.0001;
+  let price = base;
+  for (let i = 0; i < bars; i++) {
+    price += (Math.random() - 0.5) * pipSize * 8;
+    tradingEngine.addPrice(pair, Number(price.toFixed(getDecimals(pair))));
   }
 }
 
-async function sendTradingSignal() {
+// Pre-seed all pairs so the engine has data immediately
+PAIRS.forEach(p => buildPriceHistory(p));
+
+// ─── Telegram ─────────────────────────────────────────────────────────────────
+
+async function sendTelegram(text: string): Promise<boolean> {
+  const { token, chatId } = getEnvVars();
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'MarkdownV2' }),
+  });
+  if (!res.ok) {
+    console.error('Telegram error:', res.status, await res.text());
+    return false;
+  }
+  return (await res.json()).ok === true;
+}
+
+// ─── Signal formatting ────────────────────────────────────────────────────────
+
+function buildSignalMessage(pair: CurrencyPair): string {
+  const currentPrice = seedPrice(pair);
+  tradingEngine.addPrice(pair, currentPrice);
+
+  const signal = tradingEngine.analyze(pair, currentPrice);
+  const decimals = getDecimals(pair);
+  const pipMult  = getPipMultiplier(pair);
+  const session  = getSessionInfo();
+
+  const slPips = Math.round(Math.abs(signal.entryPrice - signal.stopLoss) * pipMult);
+  const tpPips = Math.round(Math.abs(signal.entryPrice - signal.takeProfit) * pipMult);
+  const rr     = slPips > 0 ? (tpPips / slPips).toFixed(1) : '0';
+  const lots   = positionSize(1000, 1, slPips);
+
+  const actionEmoji = signal.action === 'BUY' ? '🟢📈' : signal.action === 'SELL' ? '🔴📉' : '⏸️';
+  const confidencePct = signal.action === 'HOLD' ? 'n/a' : `${signal.confidence}%`;
+
+  const lines = [
+    `${actionEmoji} *${md(signal.action)} — ${md(pair)}*`,
+    '',
+    `Entry:        \`${md(signal.entryPrice.toFixed(decimals))}\``,
+    `Stop Loss:    \`${md(signal.stopLoss.toFixed(decimals))}\` \\(${md(slPips)} pips\\)`,
+    `Take Profit:  \`${md(signal.takeProfit.toFixed(decimals))}\` \\(${md(tpPips)} pips\\)`,
+    `Risk/Reward:  1:${md(rr)}`,
+    `Confidence:   ${md(confidencePct)}`,
+    '',
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `📊 *Analysis*`,
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `• RSI: ${md(signal.indicators.rsi.toFixed(1))}`,
+    `• MACD histogram: ${md(signal.indicators.macdHistogram.toFixed(5))}`,
+    `• Price vs MA20: ${md(signal.indicators.price_vs_ma20)}`,
+    `• MA trend: ${md(signal.indicators.ma_trend)}`,
+    `• ${md(signal.reason)}`,
+    '',
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `💰 *Position Size*`,
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `Balance \\$1,000 · Risk 1% \\= \\$10`,
+    `👉 *${md(lots.toFixed(2))} lots recommended*`,
+    '',
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `✅ *Pre\\-Trade Checklist*`,
+    `━━━━━━━━━━━━━━━━━━━━━━`,
+    `${session.emoji} ${md(session.message)}`,
+    `☐ Size: ${md(lots.toFixed(2))} lots`,
+    `☐ SL at ${md(signal.stopLoss.toFixed(decimals))}`,
+    `☐ TP at ${md(signal.takeProfit.toFixed(decimals))}`,
+    `☐ R/R: 1:${md(rr)}`,
+    '',
+    `⏰ ${md(getZambiaTime())} Zambia time`,
+    `🤖 ForexPulse PRO`,
+  ];
+
+  return lines.join('\n');
+}
+
+// ─── Bot State ────────────────────────────────────────────────────────────────
+
+let isRunning = false;
+let intervalId: ReturnType<typeof setInterval> | null = null;
+let signalCount = 0;
+
+async function dispatchSignal(): Promise<void> {
   if (!isRunning) return;
-  
-  const signal = generateSignal();
-  const session = getTradingSession();
-  const zambiaTime = getZambiaTime();
-  const positionSize = calculatePositionSize(1000, 1, signal.slPips);
-  const emoji = signal.action === 'BUY' ? '🟢📈' : '🔴📉';
-  const directionEmoji = signal.action === 'BUY' ? '📈' : '📉';
-  
-  // Format price display based on symbol
-  const priceDecimals = signal.symbol === 'USD/JPY' ? 2 : 5;
-  
-  const message = `${emoji} *${signal.action} SIGNAL* ${directionEmoji}\n\n` +
-    `*Symbol:* ${signal.symbol}\n` +
-    `*Action:* ${signal.action}\n` +
-    `*Entry:* ${signal.entryPrice.toFixed(priceDecimals)}\n` +
-    `*Stop Loss:* ${signal.stopLoss.toFixed(priceDecimals)} (${signal.slPips} pips)\n` +
-    `*Take Profit:* ${signal.takeProfit.toFixed(priceDecimals)} (${signal.tpPips} pips)\n` +
-    `*Risk/Reward:* 1:${(signal.tpPips / signal.slPips).toFixed(1)}\n` +
-    `*Confidence:* ${signal.confidence}%\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📊 *Signal Analysis*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `• ${signal.reason}\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `💰 *POSITION SIZE*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `Account: $1,000\n` +
-    `Risk: 1% = $10\n` +
-    `Stop Loss: ${signal.slPips} pips\n` +
-    `👉 *Recommended: ${positionSize.toFixed(2)} lots*\n\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `✅ *PRE-TRADE CHECKLIST*\n` +
-    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `[ ] ${session.emoji} ${session.message}\n` +
-    `[ ] Position size: ${positionSize.toFixed(2)} lots\n` +
-    `[ ] Stop Loss at ${signal.stopLoss.toFixed(priceDecimals)}\n` +
-    `[ ] Take Profit at ${signal.takeProfit.toFixed(priceDecimals)}\n` +
-    `[ ] Risk/Reward: 1:${(signal.tpPips / signal.slPips).toFixed(1)}\n\n` +
-    `⏰ Zambia time: ${zambiaTime}\n` +
-    `🤖 ForexPulse PRO`;
-  
-  const result = await sendTelegramMessage(message);
-  if (result?.ok) {
-    console.log(`✅ ${signal.action} ${signal.symbol} | SL:${signal.slPips}pips | TP:${signal.tpPips}pips | RR:1:${(signal.tpPips / signal.slPips).toFixed(1)}`);
+  const pair = pickRandom(PAIRS);
+  const ok = await sendTelegram(buildSignalMessage(pair));
+  if (ok) {
+    signalCount++;
+    console.log(`Signal #${signalCount} sent for ${pair}`);
   } else {
-    console.error('❌ Failed to send signal');
+    console.error('Signal failed');
   }
+}
+
+function startBot(): void {
+  isRunning = true;
+  signalCount = 0;
+  dispatchSignal();
+  intervalId = setInterval(dispatchSignal, 60_000);
+}
+
+function stopBot(): void {
+  isRunning = false;
+  if (intervalId) { clearInterval(intervalId); intervalId = null; }
+}
+
+// ─── Route Handlers ───────────────────────────────────────────────────────────
+
+export async function GET() {
+  return NextResponse.json({
+    running: isRunning,
+    signalCount,
+    message: isRunning ? `Bot running — ${signalCount} signals sent` : 'Bot stopped',
+  });
 }
 
 export async function POST(request: Request) {
-  const { action } = await request.json();
-  
-  if (action === 'start' && !isRunning) {
-    isRunning = true;
-    console.log('🚀 Professional bot starting...');
-    
-    await sendTelegramMessage('🤖 *ForexPulse PRO Activated*\n\n' +
-      '✅ Professional trading signals with proper SL/TP\n' +
-      '✅ Risk/Reward ratio: 1:1.5 to 1:2\n' +
-      '✅ Signals every 60 seconds\n\n' +
-      `📊 Current session: ${getTradingSession().message}\n\n` +
-      '📱 Keep this chat open to receive signals!');
-    
-    // Send first signal immediately
-    await sendTradingSignal();
-    
-    // Then every 60 seconds
-    intervalId = setInterval(sendTradingSignal, 60000);
-    
-    return NextResponse.json({ success: true, message: 'Bot started' });
+  let body: { action?: BotAction };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
-  
-  if (action === 'stop' && isRunning) {
-    isRunning = false;
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-    await sendTelegramMessage('⏸️ *Bot Stopped*\n\nNo more signals will be sent.');
-    return NextResponse.json({ success: true, message: 'Bot stopped' });
-  }
-  
-  if (action === 'test') {
-    const testSignal = generateSignal();
-    const message = `🔔 *Test Signal*\n\n` +
-      `Symbol: ${testSignal.symbol}\n` +
-      `Action: ${testSignal.action}\n` +
-      `Entry: ${testSignal.entryPrice}\n` +
-      `Stop Loss: ${testSignal.stopLoss} (${testSignal.slPips} pips)\n` +
-      `Take Profit: ${testSignal.takeProfit} (${testSignal.tpPips} pips)\n` +
-      `Risk/Reward: 1:${(testSignal.tpPips / testSignal.slPips).toFixed(1)}\n\n` +
-      `✅ Your bot is working correctly!`;
-    await sendTelegramMessage(message);
-    return NextResponse.json({ success: true, message: 'Test sent' });
-  }
-  
-  return NextResponse.json({ running: isRunning });
-}
 
-export async function GET() {
-  return NextResponse.json({ 
-    running: isRunning,
-    message: isRunning ? 'Bot is running' : 'Bot is stopped'
-  });
+  const { action } = body;
+
+  switch (action) {
+    case 'start': {
+      if (isRunning) return NextResponse.json({ success: false, message: 'Already running' });
+      const session = getSessionInfo();
+      await sendTelegram(
+        `🤖 *ForexPulse PRO Activated*\n\n` +
+        `✅ Real indicator analysis \\(RSI \\+ MACD \\+ MA\\)\n` +
+        `✅ Per\\-pair ATR stop loss and take profit\n` +
+        `✅ Signals every 60 seconds\n\n` +
+        `${session.emoji} ${md(session.message)}\n\n` +
+        `📱 Keep this chat open\\!`
+      );
+      startBot();
+      return NextResponse.json({ success: true, message: 'Bot started' });
     }
+
+    case 'stop': {
+      if (!isRunning) return NextResponse.json({ success: false, message: 'Not running' });
+      stopBot();
+      await sendTelegram(`⏸️ *Bot Stopped*\n\n${md(signalCount)} signals were sent this session\\.`);
+      return NextResponse.json({ success: true, message: 'Bot stopped' });
+    }
+
+    case 'test': {
+      const pair = pickRandom(PAIRS);
+      const ok = await sendTelegram(buildSignalMessage(pair));
+      return NextResponse.json({
+        success: ok,
+        message: ok ? `Test signal sent for ${pair}` : 'Telegram send failed — check env vars',
+      });
+    }
+
+    default:
+      return NextResponse.json({ error: `Unknown action: "${action}"` }, { status: 400 });
+  }
+}
