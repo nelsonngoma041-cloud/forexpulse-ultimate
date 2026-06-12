@@ -291,4 +291,4 @@ export class TradingStrategy {
     
     return { action: 'HOLD', symbol: signals[0].symbol, confidence: 0, reason: 'No consensus', timestamp: new Date() };
   }
-              }
+}
