@@ -329,11 +329,11 @@ export default function Home() {
 
             {/* KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <KPI label="Total P&L" icon={TrendingUp} value={`${totalPnL>=0?"+":""}$${totalPnL.toFixed(0)}`} color={totalPnL>=0?"#00D4AA":"#FF4560"} sub="open positions"/>
-              <KPI label="Win Rate" icon={Target} value={`${wr}%`} color="#F0B429" sub={`${wins}/${closed} closed`}/>
-              <KPI label="Positions" icon={Activity} value={String(pos.length)} sub={pos.filter(p=>p.frozen).length>0?`${pos.filter(p=>p.frozen).length} frozen`:"all active"}/>
-              <KPI label="Signals" icon={Radio} value={String(sigCnt)} color={bot?"#00D4AA":"#4A5A7A"} sub={bot?"bot active":"stopped"}/>
-              <KPI label="Account" icon={Shield} value={`$${bal.toLocaleString()}`} color="#0099FF" sub={`${risk}% risk/trade`}/>
+              <KPI label="Total P&L" Icon={TrendingUp} value={`${totalPnL>=0?"+":""}$${totalPnL.toFixed(0)}`} color={totalPnL>=0?"#00D4AA":"#FF4560"} sub="open positions"/>
+              <KPI label="Win Rate" Icon={Target} value={`${wr}%`} color="#F0B429" sub={`${wins}/${closed} closed`}/>
+              <KPI label="Positions" Icon={Activity} value={String(pos.length)} sub={pos.filter(p=>p.frozen).length>0?`${pos.filter(p=>p.frozen).length} frozen`:"all active"}/>
+              <KPI label="Signals" Icon={Radio} value={String(sigCnt)} color={bot?"#00D4AA":"#4A5A7A"} sub={bot?"bot active":"stopped"}/>
+              <KPI label="Account" Icon={Shield} value={`$${bal.toLocaleString()}`} color="#0099FF" sub={`${risk}% risk/trade`}/>
             </div>
 
             {/* chart */}
