@@ -1,12 +1,4 @@
 cat > app/lib/price-feed.ts << 'EOF'
-// app/lib/price-feed.ts
-//
-// Live price source: CurrencyFreaks (free tier updates ~once per minute).
-// Sign up free at https://currencyfreaks.com — no credit card required —
-// and set CURRENCYFREAKS_API_KEY in your environment to enable live prices.
-//
-// Without a key, this module falls back to a simulated walk so nothing breaks.
-
 export type CurrencyPair = 'EURUSD' | 'GBPUSD' | 'USDJPY' | 'AUDUSD' | 'USDCAD';
 
 export const PAIRS: CurrencyPair[] = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD'];
@@ -26,7 +18,7 @@ interface PriceCache {
 }
 
 let cache: PriceCache | null = null;
-const CACHE_TTL_MS = 50_000;
+const CACHE_TTL_MS = 50000;
 
 function decimalsFor(pair: CurrencyPair): number {
   return pair === 'USDJPY' ? 3 : 5;
@@ -43,10 +35,10 @@ function simulateAround(base: Record<CurrencyPair, number>): Record<CurrencyPair
 }
 
 async function fetchFromCurrencyFreaks(apiKey: string): Promise<Record<CurrencyPair, number>> {
-  const res = await fetch(`https://api.currencyfreaks.com/latest?apikey=${apiKey}`, {
+  const res = await fetch('https://api.currencyfreaks.com/latest?apikey=' + apiKey, {
     signal: AbortSignal.timeout(6000),
   });
-  if (!res.ok) throw new Error(`CurrencyFreaks returned ${res.status}`);
+  if (!res.ok) throw new Error('CurrencyFreaks returned ' + res.status);
 
   const data = await res.json();
   const rates = data.rates as Record<string, string>;
@@ -88,10 +80,7 @@ export async function getLivePrices(): Promise<{
       cache = { prices, fetchedAt: now, source: 'live' };
       return { prices, source: 'live', updatedAt: now };
     } catch (err) {
-      console.error(
-        'Live price fetch failed, falling back to simulated:',
-        err instanceof Error ? err.message : err
-      );
+      console.error('Live price fetch failed, falling back to simulated:', err instanceof Error ? err.message : err);
     }
   }
 
