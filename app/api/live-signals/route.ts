@@ -86,7 +86,7 @@ function buildPriceHistory(pair: CurrencyPair, bars = 60): void {
   const pipSize = pair === 'USDJPY' ? 0.01 : 0.0001;
   let price = base;
   for (let i = 0; i < bars; i++) {
-    price += (Math.random() - 0.5) * pipSize * 8;
+    price += (Math.random() - 0.5) * pipSize * 8; // ±4 pip walk per bar
     tradingEngine.addPrice(pair, Number(price.toFixed(getDecimals(pair))));
   }
 }
@@ -113,6 +113,7 @@ async function sendTelegram(text: string): Promise<boolean> {
 // ─── Signal formatting ────────────────────────────────────────────────────────
 
 function buildSignalMessage(pair: CurrencyPair): string {
+  // Add a fresh price tick before analyzing
   const currentPrice = seedPrice(pair);
   tradingEngine.addPrice(pair, currentPrice);
 
@@ -123,11 +124,11 @@ function buildSignalMessage(pair: CurrencyPair): string {
 
   const slPips = Math.round(Math.abs(signal.entryPrice - signal.stopLoss) * pipMult);
   const tpPips = Math.round(Math.abs(signal.entryPrice - signal.takeProfit) * pipMult);
-  const rr     = slPips > 0 ? (tpPips / slPips).toFixed(1) : '0';
+  const rr     = slPips > 0 ? (tpPips / slPips).toFixed(1) : '—';
   const lots   = positionSize(1000, 1, slPips);
 
   const actionEmoji = signal.action === 'BUY' ? '🟢📈' : signal.action === 'SELL' ? '🔴📉' : '⏸️';
-  const confidencePct = signal.action === 'HOLD' ? 'n/a' : `${signal.confidence}%`;
+  const confidencePct = signal.action === 'HOLD' ? '—' : `${signal.confidence}%`;
 
   const lines = [
     `${actionEmoji} *${md(signal.action)} — ${md(pair)}*`,
@@ -170,6 +171,9 @@ function buildSignalMessage(pair: CurrencyPair): string {
 }
 
 // ─── Bot State ────────────────────────────────────────────────────────────────
+// ⚠️  Module-level state works on long-running Node.js servers but will reset
+//     on every cold start in serverless environments (Vercel functions).
+//     For persistent scheduling, use a cron job + Upstash Redis.
 
 let isRunning = false;
 let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -181,16 +185,16 @@ async function dispatchSignal(): Promise<void> {
   const ok = await sendTelegram(buildSignalMessage(pair));
   if (ok) {
     signalCount++;
-    console.log(`Signal #${signalCount} sent for ${pair}`);
+    console.log(`✅ Signal #${signalCount} sent for ${pair}`);
   } else {
-    console.error('Signal failed');
+    console.error('❌ Signal failed');
   }
 }
 
 function startBot(): void {
   isRunning = true;
   signalCount = 0;
-  dispatchSignal();
+  dispatchSignal(); // immediate first signal
   intervalId = setInterval(dispatchSignal, 60_000);
 }
 
@@ -245,10 +249,7 @@ export async function POST(request: Request) {
     case 'test': {
       const pair = pickRandom(PAIRS);
       const ok = await sendTelegram(buildSignalMessage(pair));
-      return NextResponse.json({
-        success: ok,
-        message: ok ? `Test signal sent for ${pair}` : 'Telegram send failed — check env vars',
-      });
+      return NextResponse.json({ success: ok, message: ok ? `Test signal sent for ${pair}` : 'Telegram send failed — check env vars' });
     }
 
     default:
