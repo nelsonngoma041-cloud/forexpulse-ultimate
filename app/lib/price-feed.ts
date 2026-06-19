@@ -1,3 +1,4 @@
+cat > app/lib/price-feed.ts << 'EOF'
 // app/lib/price-feed.ts
 //
 // Live price source: CurrencyFreaks (free tier updates ~once per minute).
@@ -5,8 +6,6 @@
 // and set CURRENCYFREAKS_API_KEY in your environment to enable live prices.
 //
 // Without a key, this module falls back to a simulated walk so nothing breaks.
-// This is the ONLY thing that makes prices "real" vs "demo" — be honest with
-// users about which mode is active (the `source` field tells you).
 
 export type CurrencyPair = 'EURUSD' | 'GBPUSD' | 'USDJPY' | 'AUDUSD' | 'USDCAD';
 
@@ -27,7 +26,7 @@ interface PriceCache {
 }
 
 let cache: PriceCache | null = null;
-const CACHE_TTL_MS = 50_000; // stay under CurrencyFreaks' ~1/min update cadence
+const CACHE_TTL_MS = 50_000;
 
 function decimalsFor(pair: CurrencyPair): number {
   return pair === 'USDJPY' ? 3 : 5;
@@ -62,9 +61,6 @@ async function fetchFromCurrencyFreaks(apiKey: string): Promise<Record<CurrencyP
     throw new Error('Incomplete rate data from CurrencyFreaks');
   }
 
-  // CurrencyFreaks returns "units of X per 1 USD".
-  // EURUSD / GBPUSD / AUDUSD are quoted as "USD per 1 unit", so we invert.
-  // USDJPY / USDCAD are already quoted as "X per 1 USD", so we use directly.
   return {
     EURUSD: Number((1 / eur).toFixed(5)),
     GBPUSD: Number((1 / gbp).toFixed(5)),
@@ -74,12 +70,6 @@ async function fetchFromCurrencyFreaks(apiKey: string): Promise<Record<CurrencyP
   };
 }
 
-/**
- * Returns current prices for all 5 pairs.
- * Uses live CurrencyFreaks data when CURRENCYFREAKS_API_KEY is set,
- * otherwise simulates a plausible walk so the app keeps working.
- * Cached for CACHE_TTL_MS to stay well within free-tier limits.
- */
 export async function getLivePrices(): Promise<{
   prices: Record<CurrencyPair, number>;
   source: 'live' | 'simulated';
@@ -122,3 +112,4 @@ export function pairToDisplay(pair: CurrencyPair): string {
 export function displayToPair(display: string): CurrencyPair {
   return display.replace('/', '') as CurrencyPair;
 }
+EOF
