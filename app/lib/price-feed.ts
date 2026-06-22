@@ -1,4 +1,3 @@
-cat > app/lib/price-feed.ts << 'EOF'
 export type CurrencyPair = 'EURUSD' | 'GBPUSD' | 'USDJPY' | 'AUDUSD' | 'USDCAD';
 
 export const PAIRS: CurrencyPair[] = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD'];
@@ -80,7 +79,10 @@ export async function getLivePrices(): Promise<{
       cache = { prices, fetchedAt: now, source: 'live' };
       return { prices, source: 'live', updatedAt: now };
     } catch (err) {
-      console.error('Live price fetch failed, falling back to simulated:', err instanceof Error ? err.message : err);
+      console.error(
+        'Live price fetch failed, falling back to simulated:',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 
@@ -91,7 +93,11 @@ export async function getLivePrices(): Promise<{
 }
 
 const DISPLAY_MAP: Record<CurrencyPair, string> = {
-  EURUSD: 'EUR/USD', GBPUSD: 'GBP/USD', USDJPY: 'USD/JPY', AUDUSD: 'AUD/USD', USDCAD: 'USD/CAD',
+  EURUSD: 'EUR/USD',
+  GBPUSD: 'GBP/USD',
+  USDJPY: 'USD/JPY',
+  AUDUSD: 'AUD/USD',
+  USDCAD: 'USD/CAD',
 };
 
 export function pairToDisplay(pair: CurrencyPair): string {
@@ -101,4 +107,3 @@ export function pairToDisplay(pair: CurrencyPair): string {
 export function displayToPair(display: string): CurrencyPair {
   return display.replace('/', '') as CurrencyPair;
 }
-EOF
