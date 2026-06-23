@@ -40,7 +40,7 @@ function pickRandom<T>(arr: T[]): T {
 }
 
 function generateSignal(pair: string) {
-  const actions = ['BUY', 'SELL'] as const;
+  const actions = ['BUY', 'SELL'];
   const action = pickRandom(actions);
   const base = PRICES[pair];
   const isJpy = pair === 'USDJPY';
