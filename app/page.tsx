@@ -278,7 +278,7 @@ export default function Home() {
           confidence: d.signal!.confidence,
           rsi: d.signal!.rsi,
           time: clk.slice(0, 5),
-          result: "OPEN",
+          result: "OPEN" as const,
         }, ...prev].slice(0, 50));
         setSigCnt(c => c + 1);
       }
