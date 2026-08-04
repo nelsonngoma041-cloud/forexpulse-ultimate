@@ -41,26 +41,35 @@ function pickRandom<T>(arr: T[]): T {
 
 function generateSignal(pair: string) {
   const actions = ['BUY', 'SELL'];
-  const action = pickRandom(actions);
+  const action = pickRandom(actions) as 'BUY' | 'SELL';
   const base = PRICES[pair];
   const isJpy = pair === 'USDJPY';
   const decimals = isJpy ? 2 : 5;
   const pipMult = isJpy ? 100 : 10000;
   const atr = isJpy ? 0.08 : 0.0008;
   const entry = Number((base + (Math.random() - 0.5) * atr).toFixed(decimals));
-  const sl = action === 'BUY' ? Number((entry - atr * 1.5).toFixed(decimals)) : Number((entry + atr * 1.5).toFixed(decimals));
-  const tp = action === 'BUY' ? Number((entry + atr * 2.5).toFixed(decimals)) : Number((entry - atr * 2.5).toFixed(decimals));
+  const sl = action === 'BUY'
+    ? Number((entry - atr * 1.5).toFixed(decimals))
+    : Number((entry + atr * 1.5).toFixed(decimals));
+  const tp = action === 'BUY'
+    ? Number((entry + atr * 2.5).toFixed(decimals))
+    : Number((entry - atr * 2.5).toFixed(decimals));
   const slPips = Math.round(Math.abs(entry - sl) * pipMult);
   const tpPips = Math.round(Math.abs(entry - tp) * pipMult);
-  const rsi = action === 'BUY' ? Math.floor(Math.random() * 20) + 25 : Math.floor(Math.random() * 20) + 65;
+  const rsi = action === 'BUY'
+    ? Math.floor(Math.random() * 20) + 25
+    : Math.floor(Math.random() * 20) + 65;
   const confidence = Math.floor(Math.random() * 25) + 65;
   const reasons = action === 'BUY'
     ? ['RSI oversold', 'MACD bullish crossover', 'Price above MA20', 'Support held']
     : ['RSI overbought', 'MACD bearish crossover', 'Price below MA20', 'Resistance rejected'];
-  return { action, entry, sl, tp, slPips, tpPips, rsi, confidence, decimals, reason: pickRandom(reasons) };
+  return {
+    action, entry, sl, tp, slPips, tpPips, rsi, confidence, decimals,
+    reason: pickRandom(reasons),
+  };
 }
 
-async function sendTelegram(text: string): Promise<boolean> {
+async function sendTelegram(text: string): Promise<{ ok: boolean; error?: string }> {
   const { token, chatId } = getTelegramConfig();
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -69,11 +78,15 @@ async function sendTelegram(text: string): Promise<boolean> {
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'MarkdownV2' }),
     });
     const data = await res.json();
-    if (!data.ok) console.error('Telegram error:', JSON.stringify(data));
-    return data.ok === true;
+    if (!data.ok) {
+      console.error('Telegram rejected message:', JSON.stringify(data));
+      return { ok: false, error: data.description ?? 'Telegram error' };
+    }
+    return { ok: true };
   } catch (err) {
-    console.error('Telegram fetch error:', err);
-    return false;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Telegram fetch failed:', msg);
+    return { ok: false, error: msg };
   }
 }
 
@@ -88,7 +101,10 @@ async function dispatchSignal(balance = 1000, risk = 1) {
   const display = DISPLAY[pair];
   const sig = generateSignal(pair);
   const rr = (sig.tpPips / sig.slPips).toFixed(1);
-  const lots = Math.min(Math.round((balance * risk / 100) / (sig.slPips * 10) * 100) / 100, 0.10);
+  const lots = Math.min(
+    Math.round((balance * risk / 100) / (sig.slPips * 10) * 100) / 100,
+    0.10
+  );
   const session = getSession();
   const time = getZambiaTime();
   const actionEmoji = sig.action === 'BUY' ? '🟢📈' : '🔴📉';
@@ -111,12 +127,21 @@ async function dispatchSignal(balance = 1000, risk = 1) {
     `⏰ ${md(time)} · 🤖 ForexPulse PRO`,
   ].join('\n');
 
-  const ok = await sendTelegram(message);
-  if (ok) {
+  const result = await sendTelegram(message);
+  if (result.ok) {
     signalCount++;
-    recentSignals.unshift({ id: `${Date.now()}`, symbol: display, action: sig.action, confidence: sig.confidence, rsi: sig.rsi, time: time.slice(0, 5) });
+    recentSignals.unshift({
+      id: `${Date.now()}`,
+      symbol: display,
+      action: sig.action,
+      confidence: sig.confidence,
+      rsi: sig.rsi,
+      time: time.slice(0, 5),
+    });
     if (recentSignals.length > 20) recentSignals.pop();
-    console.log(`Signal #${signalCount} sent: ${sig.action} ${display}`);
+    console.log(`Signal #${signalCount}: ${sig.action} ${display}`);
+  } else {
+    console.error(`Signal failed: ${result.error}`);
   }
 }
 
@@ -133,32 +158,49 @@ function stopBot() {
 }
 
 export async function GET() {
+  const token = process.env.TELEGRAM_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
   return NextResponse.json({
     running: isRunning,
     signalCount,
     mt5Connected: false,
     recentSignals,
     message: isRunning ? `Running — ${signalCount} signals sent` : 'Bot stopped',
+    debug: {
+      hasToken: !!token,
+      tokenPreview: token ? token.slice(0, 10) + '...' : 'MISSING',
+      hasChatId: !!chatId,
+      chatId: chatId ?? 'MISSING',
+    },
   });
 }
 
 export async function POST(request: Request) {
   let body: { action?: string; balance?: number; risk?: number };
-  try { body = await request.json(); }
-  catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
 
   const { action, balance = 1000, risk = 1 } = body;
 
   if (action === 'start') {
     if (isRunning) return NextResponse.json({ success: false, message: 'Already running' });
     const session = getSession();
-    await sendTelegram(
+    const result = await sendTelegram(
       `🤖 *ForexPulse PRO Activated*\n\n` +
       `✅ Signals every 60 seconds\n` +
       `✅ Entry, SL, TP and lot size included\n\n` +
       `${session.emoji} ${md(session.message)}\n\n` +
       `Account: \\$${md(balance)} · Risk: ${md(risk)}%`
     );
+    if (!result.ok) {
+      return NextResponse.json({
+        success: false,
+        message: `Telegram failed: ${result.error}`,
+      });
+    }
     startBot(balance, risk);
     return NextResponse.json({ success: true, message: 'Bot started' });
   }
@@ -174,7 +216,7 @@ export async function POST(request: Request) {
     const pair = pickRandom(PAIRS);
     const display = DISPLAY[pair];
     const sig = generateSignal(pair);
-    const ok = await sendTelegram(
+    const result = await sendTelegram(
       `🔔 *Test Signal — ${md(display)}*\n\n` +
       `Action: *${md(sig.action)}*\n` +
       `Entry: ${md(sig.entry)}\n` +
@@ -183,8 +225,8 @@ export async function POST(request: Request) {
       `✅ Bot is working correctly\\!`
     );
     return NextResponse.json({
-      success: ok,
-      message: ok ? 'Test signal sent' : 'Telegram failed — check env vars',
+      success: result.ok,
+      message: result.ok ? 'Test signal sent' : `Telegram failed: ${result.error}`,
       signal: { symbol: display, action: sig.action, confidence: sig.confidence, rsi: sig.rsi },
     });
   }
