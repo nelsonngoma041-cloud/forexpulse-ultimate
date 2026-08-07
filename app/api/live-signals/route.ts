@@ -1,4 +1,6 @@
 // app/api/live-signals/route.ts
+export const runtime = 'edge';
+
 import { NextResponse } from 'next/server';
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
@@ -14,29 +16,59 @@ function getDerivToken(): string | null {
   return process.env.DERIV_API_TOKEN ?? null;
 }
 
-// ─── Deriv HTTP API ───────────────────────────────────────────────────────────
-// Deriv's REST API works with simple fetch calls — no WebSocket needed.
-// Base URL: https://api.deriv.com
+// ─── Deriv WebSocket via Edge runtime (no timeout) ────────────────────────────
 
-const DERIV_API = 'https://api.deriv.com';
+const DERIV_WS_URL = 'wss://ws.binaryws.com/websockets/v3?app_id=1089';
 
 const SYMBOL_MAP: Record<string, string> = {
   EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD', USDJPY: 'frxUSDJPY',
   AUDUSD: 'frxAUDUSD', USDCAD: 'frxUSDCAD',
 };
 
-async function derivFetch(endpoint: string, body: Record<string, unknown>, token: string) {
-  const res = await fetch(`${DERIV_API}${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
+interface WSMsg { [key: string]: unknown; }
+
+function derivWS(messages: WSMsg[]): Promise<WSMsg[]> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(DERIV_WS_URL);
+    const responses: WSMsg[] = [];
+    let idx = 0;
+
+    const timer = setTimeout(() => {
+      ws.close();
+      reject(new Error('Deriv WebSocket timed out after 30s'));
+    }, 30000);
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify(messages[idx]));
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      const msg = JSON.parse(event.data as string) as WSMsg;
+      responses.push(msg);
+
+      if (msg.error) {
+        clearTimeout(timer);
+        ws.close();
+        const errMsg = (msg.error as { message?: string }).message ?? JSON.stringify(msg.error);
+        reject(new Error(`Deriv error: ${errMsg}`));
+        return;
+      }
+
+      idx++;
+      if (idx < messages.length) {
+        ws.send(JSON.stringify(messages[idx]));
+      } else {
+        clearTimeout(timer);
+        ws.close();
+        resolve(responses);
+      }
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timer);
+      reject(new Error('Deriv WebSocket connection failed'));
+    };
   });
-  if (!res.ok) throw new Error(`Deriv API ${res.status}: ${await res.text()}`);
-  return res.json();
 }
 
 async function derivBuy(
@@ -50,57 +82,47 @@ async function derivBuy(
   if (!derivSym) return { ok: false, error: `${symbol} not supported on Deriv` };
 
   try {
-    // Step 1: Get proposal
-    const proposalRes = await derivFetch('/v3/proposal', {
-      proposal: 1,
-      amount: stake,
-      basis: 'stake',
-      contract_type: action === 'BUY' ? 'CALL' : 'PUT',
-      currency: 'USD',
-      duration: durationMin,
-      duration_unit: 'm',
-      symbol: derivSym,
-    }, token);
+    // Step 1: authorize + get proposal
+    const propRes = await derivWS([
+      { authorize: token },
+      {
+        proposal: 1,
+        amount: stake,
+        basis: 'stake',
+        contract_type: action === 'BUY' ? 'CALL' : 'PUT',
+        currency: 'USD',
+        duration: durationMin,
+        duration_unit: 'm',
+        symbol: derivSym,
+      },
+    ]);
 
-    if (proposalRes.error) {
-      return { ok: false, error: proposalRes.error.message ?? JSON.stringify(proposalRes.error) };
-    }
+    const prop = (propRes[1] as { proposal?: { id: string; ask_price: number; payout: number } }).proposal;
+    if (!prop) return { ok: false, error: 'No proposal returned from Deriv' };
 
-    const proposalId = proposalRes.proposal?.id;
-    const askPrice = proposalRes.proposal?.ask_price;
+    // Step 2: authorize + buy
+    const buyRes = await derivWS([
+      { authorize: token },
+      { buy: prop.id, price: prop.ask_price },
+    ]);
 
-    if (!proposalId) return { ok: false, error: 'No proposal ID returned' };
+    const buy = (buyRes[1] as { buy?: { contract_id: number; buy_price: number; payout: number } }).buy;
+    if (!buy) return { ok: false, error: 'Buy order failed' };
 
-    // Step 2: Buy the contract
-    const buyRes = await derivFetch('/v3/buy', {
-      buy: proposalId,
-      price: askPrice,
-    }, token);
-
-    if (buyRes.error) {
-      return { ok: false, error: buyRes.error.message ?? JSON.stringify(buyRes.error) };
-    }
-
-    const contract = buyRes.buy;
-    if (!contract) return { ok: false, error: 'No contract returned from buy' };
-
-    return {
-      ok: true,
-      contractId: contract.contract_id,
-      buyPrice: contract.buy_price,
-      payout: contract.payout,
-    };
+    return { ok: true, contractId: buy.contract_id, buyPrice: buy.buy_price, payout: buy.payout };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-async function derivGetBalance(token: string): Promise<string> {
+async function derivBalance(token: string): Promise<string> {
   try {
-    const res = await derivFetch('/v3/balance', { balance: 1, account: 'current' }, token);
-    if (res.error) return `Error: ${res.error.message}`;
-    const b = res.balance;
-    return b ? `${b.currency} ${Number(b.balance).toFixed(2)}` : 'connected';
+    const res = await derivWS([
+      { authorize: token },
+      { balance: 1, account: 'current' },
+    ]);
+    const bal = (res[1] as { balance?: { balance: number; currency: string } }).balance;
+    return bal ? `${bal.currency} ${Number(bal.balance).toFixed(2)}` : 'connected';
   } catch (err) {
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
@@ -177,20 +199,18 @@ async function sendTelegram(text: string): Promise<{ ok: boolean; error?: string
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'MarkdownV2' }),
     });
-    const data = await res.json();
-    if (!data.ok) {
-      console.error('Telegram rejected:', JSON.stringify(data));
-      return { ok: false, error: data.description };
-    }
+    const data = await res.json() as { ok: boolean; description?: string };
+    if (!data.ok) return { ok: false, error: data.description };
     return { ok: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('Telegram error:', msg);
-    return { ok: false, error: msg };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 // ─── Bot state ────────────────────────────────────────────────────────────────
+// Note: Edge runtime does not persist state between requests.
+// The bot interval runs within a single invocation only.
+// For persistent scheduling use Vercel Cron Jobs (vercel.json).
 
 let isRunning = false;
 let signalCount = 0;
@@ -303,7 +323,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   let body: { action?: string; stake?: number; duration?: number };
-  try { body = await request.json(); }
+  try { body = await request.json() as { action?: string; stake?: number; duration?: number }; }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
   const { action, stake = 10, duration = 5 } = body;
@@ -343,7 +363,7 @@ export async function POST(request: Request) {
 
     let derivStatus = 'Not configured — add DERIV_API_TOKEN to Vercel';
     if (derivToken) {
-      derivStatus = await derivGetBalance(derivToken);
+      derivStatus = await derivBalance(derivToken);
     }
 
     const result = await sendTelegram(
