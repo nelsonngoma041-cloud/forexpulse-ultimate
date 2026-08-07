@@ -1,11 +1,13 @@
 // app/api/cron-signal/route.ts
-// Runs every minute via Vercel Cron — Node.js runtime, no WebSocket timeout
+// Runs every minute via Vercel Cron — Node.js runtime with ws package
 
 import { NextResponse } from 'next/server';
+import WebSocket from 'ws';
 
 // ─── Deriv WebSocket ──────────────────────────────────────────────────────────
 
-const DERIV_WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${process.env.DERIV_APP_ID ?? '342T8yYeveFOVV6CT9yoV'}`;
+const DERIV_APP_ID = process.env.DERIV_APP_ID ?? '342T8yYeveFOVV6CT9yoV';
+const DERIV_WS_URL = `wss://ws.derivws.com/websockets/v3?app_id=${DERIV_APP_ID}`;
 
 const SYMBOL_MAP: Record<string, string> = {
   EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD', USDJPY: 'frxUSDJPY',
@@ -16,8 +18,7 @@ interface WSMsg { [key: string]: unknown; }
 
 function derivWS(messages: WSMsg[]): Promise<WSMsg[]> {
   return new Promise((resolve, reject) => {
-    const WebSocketImpl = require('ws');
-    const ws = new WebSocketImpl(DERIV_WS_URL);
+    const ws = new WebSocket(DERIV_WS_URL);
     const responses: WSMsg[] = [];
     let idx = 0;
 
@@ -28,7 +29,7 @@ function derivWS(messages: WSMsg[]): Promise<WSMsg[]> {
 
     ws.on('open', () => ws.send(JSON.stringify(messages[idx])));
 
-    ws.on('message', (data: Buffer) => {
+    ws.on('message', (data: WebSocket.RawData) => {
       const msg = JSON.parse(data.toString()) as WSMsg;
       responses.push(msg);
       if (msg.error) {
@@ -58,14 +59,14 @@ async function derivBuy(
         currency:'USD', duration:durationMin, duration_unit:'m', symbol:derivSym },
     ]);
     const prop = (propRes[1] as {proposal?:{id:string;ask_price:number;payout:number}}).proposal;
-    if (!prop) return { ok:false, error:'No proposal' };
+    if (!prop) return { ok:false, error:'No proposal returned' };
 
     const buyRes = await derivWS([
       { authorize: token },
       { buy: prop.id, price: prop.ask_price },
     ]);
     const buy = (buyRes[1] as {buy?:{contract_id:number;buy_price:number;payout:number}}).buy;
-    if (!buy) return { ok:false, error:'Buy failed' };
+    if (!buy) return { ok:false, error:'Buy order failed' };
     return { ok:true, contractId:buy.contract_id, buyPrice:buy.buy_price, payout:buy.payout };
   } catch(err) {
     return { ok:false, error: err instanceof Error ? err.message : String(err) };
@@ -125,12 +126,16 @@ function generateSignal(pair: string) {
 async function sendTelegram(text: string) {
   const token  = process.env.TELEGRAM_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return;
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({chat_id:chatId, text, parse_mode:'MarkdownV2'}),
-  });
+  if (!token || !chatId) return false;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id:chatId, text, parse_mode:'MarkdownV2'}),
+    });
+    const d = await res.json() as {ok:boolean};
+    return d.ok;
+  } catch { return false; }
 }
 
 // ─── Cron handler ─────────────────────────────────────────────────────────────
@@ -142,15 +147,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Check if bot should be running
-  const botEnabled = process.env.BOT_ENABLED === 'true';
-  if (!botEnabled) {
+  // Check if bot is enabled
+  if (process.env.BOT_ENABLED !== 'true') {
     return NextResponse.json({ skipped: true, reason: 'BOT_ENABLED is not true' });
   }
 
   const derivToken = process.env.DERIV_API_TOKEN;
-  const stake = Number(process.env.DERIV_STAKE ?? '10');
-  const duration = Number(process.env.DERIV_DURATION ?? '5');
+  const stake      = Number(process.env.DERIV_STAKE    ?? '10');
+  const duration   = Number(process.env.DERIV_DURATION ?? '5');
 
   const pair    = pickRandom(PAIRS);
   const display = DISPLAY[pair];
@@ -201,7 +205,7 @@ export async function GET(request: Request) {
     ok: true,
     signal: `${sig.action} ${display}`,
     executed: tradeResult.ok,
-    contractId: tradeResult.contractId,
-    error: tradeResult.error,
+    contractId: tradeResult.contractId ?? null,
+    error: tradeResult.error ?? null,
   });
 }
