@@ -18,7 +18,7 @@ function getDerivToken(): string | null {
 
 // ─── Deriv WebSocket via Edge runtime (no timeout) ────────────────────────────
 
-const DERIV_WS_URL = 'wss://ws.binaryws.com/websockets/v3?app_id=1089';
+const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=342T8yYeveFOVV6CT9yoV';
 
 const SYMBOL_MAP: Record<string, string> = {
   EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD', USDJPY: 'frxUSDJPY',
