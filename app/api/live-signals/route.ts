@@ -1,5 +1,4 @@
 // app/api/live-signals/route.ts
-export const runtime = 'edge';
 
 import { NextResponse } from 'next/server';
 
