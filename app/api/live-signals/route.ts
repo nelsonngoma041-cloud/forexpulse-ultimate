@@ -1,5 +1,4 @@
 // app/api/live-signals/route.ts
-
 import { NextResponse } from 'next/server';
 
 // ─── Env ──────────────────────────────────────────────────────────────────────
