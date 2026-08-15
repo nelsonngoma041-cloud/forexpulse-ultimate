@@ -10,119 +10,34 @@ function getTelegram() {
   return { token, chatId };
 }
 
-function getDerivToken(): string | null {
-  return process.env.DERIV_API_TOKEN ?? null;
+function getBridge() {
+  const url = process.env.RAILWAY_BRIDGE_URL;
+  const secret = process.env.RAILWAY_BRIDGE_SECRET;
+  return url && secret ? { url, secret } : null;
 }
 
-// ─── Deriv WebSocket via Edge runtime (no timeout) ────────────────────────────
+// ─── Bridge call ──────────────────────────────────────────────────────────────
 
-const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=342T8yYeveFOVV6CT9yoV';
-
-const SYMBOL_MAP: Record<string, string> = {
-  EURUSD: 'frxEURUSD', GBPUSD: 'frxGBPUSD', USDJPY: 'frxUSDJPY',
-  AUDUSD: 'frxAUDUSD', USDCAD: 'frxUSDCAD',
-};
-
-interface WSMsg { [key: string]: unknown; }
-
-function derivWS(messages: WSMsg[]): Promise<WSMsg[]> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(DERIV_WS_URL);
-    const responses: WSMsg[] = [];
-    let idx = 0;
-
-    const timer = setTimeout(() => {
-      ws.close();
-      reject(new Error('Deriv WebSocket timed out after 30s'));
-    }, 30000);
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify(messages[idx]));
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      const msg = JSON.parse(event.data as string) as WSMsg;
-      responses.push(msg);
-
-      if (msg.error) {
-        clearTimeout(timer);
-        ws.close();
-        const errMsg = (msg.error as { message?: string }).message ?? JSON.stringify(msg.error);
-        reject(new Error(`Deriv error: ${errMsg}`));
-        return;
-      }
-
-      idx++;
-      if (idx < messages.length) {
-        ws.send(JSON.stringify(messages[idx]));
-      } else {
-        clearTimeout(timer);
-        ws.close();
-        resolve(responses);
-      }
-    };
-
-    ws.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error('Deriv WebSocket connection failed'));
-    };
-  });
-}
-
-async function derivBuy(
-  token: string,
-  symbol: string,
-  action: 'BUY' | 'SELL',
-  stake: number,
-  durationMin: number
-): Promise<{ ok: true; contractId: number; buyPrice: number; payout: number } | { ok: false; error: string }> {
-  const derivSym = SYMBOL_MAP[symbol];
-  if (!derivSym) return { ok: false, error: `${symbol} not supported on Deriv` };
+async function callBridge(payload: Record<string, unknown>): Promise<{
+  ok: boolean; contractId?: number; buyPrice?: number; payout?: number;
+  balance?: string; error?: string;
+}> {
+  const bridge = getBridge();
+  if (!bridge) return { ok: false, error: 'Bridge not configured' };
 
   try {
-    // Step 1: authorize + get proposal
-    const propRes = await derivWS([
-      { authorize: token },
-      {
-        proposal: 1,
-        amount: stake,
-        basis: 'stake',
-        contract_type: action === 'BUY' ? 'CALL' : 'PUT',
-        currency: 'USD',
-        duration: durationMin,
-        duration_unit: 'm',
-        symbol: derivSym,
+    const res = await fetch(bridge.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bridge-Secret': bridge.secret,
       },
-    ]);
-
-    const prop = (propRes[1] as { proposal?: { id: string; ask_price: number; payout: number } }).proposal;
-    if (!prop) return { ok: false, error: 'No proposal returned from Deriv' };
-
-    // Step 2: authorize + buy
-    const buyRes = await derivWS([
-      { authorize: token },
-      { buy: prop.id, price: prop.ask_price },
-    ]);
-
-    const buy = (buyRes[1] as { buy?: { contract_id: number; buy_price: number; payout: number } }).buy;
-    if (!buy) return { ok: false, error: 'Buy order failed' };
-
-    return { ok: true, contractId: buy.contract_id, buyPrice: buy.buy_price, payout: buy.payout };
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(35000),
+    });
+    return await res.json();
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-async function derivBalance(token: string): Promise<string> {
-  try {
-    const res = await derivWS([
-      { authorize: token },
-      { balance: 1, account: 'current' },
-    ]);
-    const bal = (res[1] as { balance?: { balance: number; currency: string } }).balance;
-    return bal ? `${bal.currency} ${Number(bal.balance).toFixed(2)}` : 'connected';
-  } catch (err) {
-    return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -163,8 +78,7 @@ function pickRandom<T>(arr: T[]): T {
 }
 
 function generateSignal(pair: string) {
-  const actions = ['BUY', 'SELL'];
-  const action = pickRandom(actions) as 'BUY' | 'SELL';
+  const action = pickRandom(['BUY', 'SELL']) as 'BUY' | 'SELL';
   const base = PRICES[pair];
   const isJpy = pair === 'USDJPY';
   const decimals = isJpy ? 2 : 5;
@@ -192,7 +106,7 @@ function generateSignal(pair: string) {
 async function sendTelegram(text: string): Promise<{ ok: boolean; error?: string }> {
   const { token, chatId } = getTelegram();
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'MarkdownV2' }),
@@ -206,9 +120,6 @@ async function sendTelegram(text: string): Promise<{ ok: boolean; error?: string
 }
 
 // ─── Bot state ────────────────────────────────────────────────────────────────
-// Note: Edge runtime does not persist state between requests.
-// The bot interval runs within a single invocation only.
-// For persistent scheduling use Vercel Cron Jobs (vercel.json).
 
 let isRunning = false;
 let signalCount = 0;
@@ -226,49 +137,56 @@ async function dispatchSignal(stake = 10, durationMin = 5) {
   const session = getSession();
   const time = getZambiaTime();
   const actionEmoji = sig.action === 'BUY' ? '🟢📈' : '🔴📉';
-  const derivToken = getDerivToken();
+  const bridge = getBridge();
 
-  let executionLine = `⚠️ Manual mode — execute in Deriv app`;
+  let executionLine = '⚠️ Manual mode — execute in Deriv app';
   let tradeResult: { ok: boolean; contractId?: number; buyPrice?: number; payout?: number; error?: string } = { ok: false };
 
-  if (derivToken) {
-    tradeResult = await derivBuy(derivToken, pair, sig.action, stake, durationMin);
+  if (bridge) {
+    tradeResult = await callBridge({
+      cmd: sig.action,
+      symbol: pair,
+      stake,
+      duration: durationMin,
+    });
+
     if (tradeResult.ok) {
       executedCount++;
       executionLine =
-        `✅ *Auto\\-executed on Deriv*\n` +
-        `Contract \\#${md(tradeResult.contractId!)}\n` +
-        `Stake: \\$${md(tradeResult.buyPrice!.toFixed(2))} · Payout: \\$${md(tradeResult.payout!.toFixed(2))}`;
+        '✅ *Auto\\-executed on Deriv*\n' +
+        'Contract \\#' + md(tradeResult.contractId!) + '\n' +
+        'Stake: \\$' + md(tradeResult.buyPrice!.toFixed(2)) +
+        ' · Payout: \\$' + md(tradeResult.payout!.toFixed(2));
     } else {
-      executionLine = `❌ Deriv failed: ${md(tradeResult.error ?? 'unknown')}`;
+      executionLine = '❌ Deriv failed: ' + md(tradeResult.error ?? 'unknown');
     }
   }
 
   const message = [
-    `${actionEmoji} *${md(sig.action)} — ${md(display)}*`,
+    actionEmoji + ' *' + md(sig.action) + ' — ' + md(display) + '*',
     '',
-    `Entry:        \`${md(sig.entry)}\``,
-    `Stop Loss:    \`${md(sig.sl)}\` \\(${md(sig.slPips)} pips\\)`,
-    `Take Profit:  \`${md(sig.tp)}\` \\(${md(sig.tpPips)} pips\\)`,
-    `Risk/Reward:  1:${md(rr)}`,
-    `Confidence:   ${md(sig.confidence)}%`,
-    `RSI:          ${md(sig.rsi)}`,
+    'Entry:        \\`' + md(sig.entry) + '\\`',
+    'Stop Loss:    \\`' + md(sig.sl) + '\\` \\(' + md(sig.slPips) + ' pips\\)',
+    'Take Profit:  \\`' + md(sig.tp) + '\\` \\(' + md(sig.tpPips) + ' pips\\)',
+    'Risk/Reward:  1:' + md(rr),
+    'Confidence:   ' + md(sig.confidence) + '%',
+    'RSI:          ' + md(sig.rsi),
     '',
-    `📊 ${md(sig.reason)}`,
+    '📊 ' + md(sig.reason),
     '',
-    `💰 Stake: \\$${md(stake)} · Duration: ${md(durationMin)} min`,
+    '💰 Stake: \\$' + md(stake) + ' · Duration: ' + md(durationMin) + ' min',
     '',
     executionLine,
     '',
-    `${session.emoji} ${md(session.message)}`,
-    `⏰ ${md(time)} · 🤖 ForexPulse PRO`,
+    session.emoji + ' ' + md(session.message),
+    '⏰ ' + md(time) + ' · 🤖 ForexPulse PRO',
   ].join('\n');
 
   const sent = await sendTelegram(message);
   if (sent.ok) {
     signalCount++;
     recentSignals.unshift({
-      id: `${Date.now()}`,
+      id: String(Date.now()),
       symbol: display,
       action: sig.action,
       confidence: sig.confidence,
@@ -278,7 +196,8 @@ async function dispatchSignal(stake = 10, durationMin = 5) {
       contractId: tradeResult.contractId,
     });
     if (recentSignals.length > 20) recentSignals.pop();
-    console.log(`Signal #${signalCount}: ${sig.action} ${display} | Deriv: ${tradeResult.ok ? `#${tradeResult.contractId}` : `failed: ${tradeResult.error}`}`);
+    console.log('Signal #' + signalCount + ': ' + sig.action + ' ' + display +
+      ' | Bridge: ' + (tradeResult.ok ? '#' + tradeResult.contractId : 'failed: ' + tradeResult.error));
   }
 }
 
@@ -300,55 +219,55 @@ function stopBot() {
 export async function GET() {
   const telegramToken = process.env.TELEGRAM_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
-  const derivToken = process.env.DERIV_API_TOKEN;
+  const bridge = getBridge();
   return NextResponse.json({
     running: isRunning,
     signalCount,
     executedCount,
     mt5Connected: false,
-    derivConnected: !!derivToken,
+    derivConnected: !!bridge,
     recentSignals,
-    message: isRunning ? `Running — ${signalCount} signals, ${executedCount} on Deriv` : 'Bot stopped',
+    message: isRunning ? 'Running — ' + signalCount + ' signals, ' + executedCount + ' on Deriv' : 'Bot stopped',
     debug: {
       hasToken: !!telegramToken,
       tokenPreview: telegramToken ? telegramToken.slice(0, 10) + '...' : 'MISSING',
       hasChatId: !!chatId,
       chatId: chatId ?? 'MISSING',
-      hasDerivToken: !!derivToken,
+      hasBridge: !!bridge,
     },
   });
 }
 
 export async function POST(request: Request) {
   let body: { action?: string; stake?: number; duration?: number };
-  try { body = await request.json() as { action?: string; stake?: number; duration?: number }; }
+  try { body = await request.json(); }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
   const { action, stake = 10, duration = 5 } = body;
 
   if (action === 'start') {
     if (isRunning) return NextResponse.json({ success: false, message: 'Already running' });
-    const derivToken = getDerivToken();
+    const bridge = getBridge();
     const session = getSession();
     const result = await sendTelegram(
-      `🤖 *ForexPulse PRO Activated*\n\n` +
-      `${derivToken ? '✅ Deriv auto\\-execution: ON' : '⚠️ Manual mode — add DERIV\\_API\\_TOKEN to Vercel'}\n` +
-      `✅ Signals every 60 seconds\n` +
-      `✅ Entry, SL, TP included\n\n` +
-      `${session.emoji} ${md(session.message)}\n\n` +
-      `Stake: \\$${md(stake)} · Duration: ${md(duration)} min`
+      '🤖 *ForexPulse PRO Activated*\n\n' +
+      (bridge ? '✅ Deriv auto\\-execution: ON \\(via Render bridge\\)' : '⚠️ Manual mode — bridge not configured') + '\n' +
+      '✅ Signals every 60 seconds\n' +
+      '✅ Entry, SL, TP included\n\n' +
+      session.emoji + ' ' + md(session.message) + '\n\n' +
+      'Stake: \\$' + md(stake) + ' · Duration: ' + md(duration) + ' min'
     );
-    if (!result.ok) return NextResponse.json({ success: false, message: `Telegram failed: ${result.error}` });
+    if (!result.ok) return NextResponse.json({ success: false, message: 'Telegram failed: ' + result.error });
     startBot(stake, duration);
-    return NextResponse.json({ success: true, derivConnected: !!derivToken });
+    return NextResponse.json({ success: true, derivConnected: !!bridge });
   }
 
   if (action === 'stop') {
     if (!isRunning) return NextResponse.json({ success: false, message: 'Not running' });
     stopBot();
     await sendTelegram(
-      `⏸️ *Bot Stopped*\n\n` +
-      `${md(signalCount)} signals · ${md(executedCount)} executed on Deriv\\.`
+      '⏸️ *Bot Stopped*\n\n' +
+      md(signalCount) + ' signals · ' + md(executedCount) + ' executed on Deriv\\.'
     );
     return NextResponse.json({ success: true, signalCount, executedCount });
   }
@@ -357,30 +276,31 @@ export async function POST(request: Request) {
     const pair = pickRandom(PAIRS);
     const display = DISPLAY[pair];
     const sig = generateSignal(pair);
-    const derivToken = getDerivToken();
+    const bridge = getBridge();
 
-    let derivStatus = 'Not configured — add DERIV_API_TOKEN to Vercel';
-    if (derivToken) {
-      derivStatus = await derivBalance(derivToken);
+    let bridgeStatus = 'Not configured';
+    if (bridge) {
+      const res = await callBridge({ cmd: 'BALANCE' });
+      bridgeStatus = res.ok ? 'Connected ✓ — Balance: ' + (res.balance ?? '?') : 'Error: ' + (res.error ?? 'unknown');
     }
 
     const result = await sendTelegram(
-      `🔔 *Test Signal — ${md(display)}*\n\n` +
-      `Action: *${md(sig.action)}*\n` +
-      `Entry: ${md(sig.entry)}\n` +
-      `Confidence: ${md(sig.confidence)}%\n` +
-      `RSI: ${md(sig.rsi)}\n\n` +
-      `Deriv: ${md(derivStatus)}\n\n` +
-      `✅ Bot is working correctly\\!`
+      '🔔 *Test Signal — ' + md(display) + '*\n\n' +
+      'Action: *' + md(sig.action) + '*\n' +
+      'Entry: ' + md(sig.entry) + '\n' +
+      'Confidence: ' + md(sig.confidence) + '%\n' +
+      'RSI: ' + md(sig.rsi) + '\n\n' +
+      'Bridge: ' + md(bridgeStatus) + '\n\n' +
+      '✅ Bot is working correctly\\!'
     );
 
     return NextResponse.json({
       success: result.ok,
-      message: result.ok ? 'Test signal sent' : `Telegram failed: ${result.error}`,
+      message: result.ok ? 'Test signal sent' : 'Telegram failed: ' + result.error,
       signal: { symbol: display, action: sig.action, confidence: sig.confidence, rsi: sig.rsi },
-      derivStatus,
+      bridgeStatus,
     });
   }
 
-  return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  return NextResponse.json({ error: 'Unknown action: ' + action }, { status: 400 });
 }
