@@ -175,7 +175,7 @@ function scheduleDailySummary() {
 
 // ─── Signal dispatch ──────────────────────────────────────────────────────────
 
-async function dispatchSignal(durationMin = 5) {
+async function dispatchSignal(durationMin = 15) {
   if (!isRunning) return;
 
   const session = getSession();
@@ -204,9 +204,11 @@ async function dispatchSignal(durationMin = 5) {
     '',
     '📊 ' + md(sig.reason),
     '',
-    '💰 Suggested stake: \\$' + md(stake) + ' · Duration: ' + md(durationMin) + ' min',
+    '💰 Suggested stake: \\$' + md(stake) + ' · Duration: 15 min',
     '',
-    '📱 Open Deriv app and place manually',
+    '⏳ *Execute within 2–5 mins of this signal*',
+    '📱 Open Deriv app → Rise\\/Fall → set 15 min duration',
+    '⚠️ Do NOT execute after 5 minutes — signal expires',
     '',
     session.emoji + ' ' + md(session.message),
     '⏰ ' + md(time) + ' · 🤖 ForexPulse PRO',
@@ -215,6 +217,20 @@ async function dispatchSignal(durationMin = 5) {
   const sent = await sendTelegram(message);
   if (sent.ok) {
     signalCount++;
+
+    // Send execution reminder after 2 minutes
+    setTimeout(async () => {
+      if (!isRunning) return;
+      await sendTelegram(
+        '⏰ *Execute now — ' + md(pair.display) + '*\n\n' +
+        actionEmoji + ' *' + md(sig.action) + '* at \\`' + md(sig.entry) + '\\`\n' +
+        'SL: \\`' + md(sig.sl) + '\\` · TP: \\`' + md(sig.tp) + '\\`\n\n' +
+        '✅ Window open — execute in Deriv now\\!\n' +
+        'Set duration: *15 minutes* \\(Rise or Fall\\)\n' +
+        '⚠️ Signal expires in 3 minutes — act now'
+      );
+    }, 2 * 60 * 1000);
+
     recentSignals.unshift({
       id: String(Date.now()),
       symbol: pair.display,
@@ -233,8 +249,8 @@ function startBot(duration: number) {
   isRunning = true;
   signalCount = 0;
   scheduleDailySummary();
-  dispatchSignal(duration);
-  intervalId = setInterval(() => dispatchSignal(duration), 60000);
+  dispatchSignal(15);
+  intervalId = setInterval(() => dispatchSignal(15), 60000);
 }
 
 function stopBot() {
@@ -269,7 +285,7 @@ export async function POST(request: Request) {
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
-  const { action, duration = 5 } = body;
+  const { action, duration = 15 } = body;
 
   // Telegram webhook commands
   if (body.message?.text) {
@@ -292,7 +308,7 @@ export async function POST(request: Request) {
       '👉 Open Deriv app to execute trades manually'
     );
     if (!result.ok) return NextResponse.json({ success: false, message: 'Telegram failed: ' + result.error });
-    startBot(duration);
+    startBot(15);
     return NextResponse.json({ success: true });
   }
 
