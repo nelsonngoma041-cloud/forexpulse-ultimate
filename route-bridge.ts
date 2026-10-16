@@ -42,6 +42,8 @@ async function bridgeCall(payload: Record<string, unknown>) {
   });
   return (await res.json()) as {
     ok: boolean; error?: string; analysis?: Analysis; balance?: string; accounts?: unknown;
+    trade?: { contract_id?: number; buy_price?: number; balance_after?: number; tradesToday?: number };
+    result?: { is_sold: boolean; status?: string; profit?: number };
   };
 }
 
@@ -132,6 +134,34 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 const lastSignalAt: Record<string, number> = {};
 const recentSignals: object[] = [];
 
+// Trades the bot placed itself, waiting for their result
+interface PendingTrade { contractId: number; display: string; action: string; placedAt: number; }
+const pendingTrades: PendingTrade[] = [];
+let autoTrade = process.env.AUTO_TRADE === 'true';
+
+async function checkPendingTrades() {
+  const now = Date.now();
+  for (const t of [...pendingTrades]) {
+    if (now - t.placedAt < 15.5 * 60 * 1000) continue; // 15 min contract + buffer
+    try {
+      const r = await bridgeCall({ cmd: 'CHECK', contract_id: t.contractId });
+      if (!r.ok || !r.result) continue;
+      if (!r.result.is_sold && now - t.placedAt < 25 * 60 * 1000) continue; // not settled yet
+      const profit = Number(r.result.profit ?? 0);
+      const won = r.result.status === 'won' || profit > 0;
+      if (won) dailyWins++; else dailyLosses++;
+      pendingTrades.splice(pendingTrades.indexOf(t), 1);
+      await sendTelegram(
+        (won ? '✅ *WIN*' : '❌ *LOSS*') + ' — ' + md(t.display) + ' ' + md(t.action) + '\n' +
+        'Profit: ' + md(profit.toFixed(2)) + '\n' +
+        'Total: ' + md(dailyWins) + 'W/' + md(dailyLosses) + 'L'
+      );
+    } catch (e) {
+      console.error('Check failed:', e instanceof Error ? e.message : String(e));
+    }
+  }
+}
+
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 async function handleCommand(text: string) {
@@ -159,6 +189,12 @@ async function handleCommand(text: string) {
   } else if (cmd === '/loss') {
     dailyLosses++;
     await sendTelegram('❌ Loss recorded: ' + md(dailyWins) + 'W/' + md(dailyLosses) + 'L');
+  } else if (cmd === '/auto on') {
+    autoTrade = true;
+    await sendTelegram('🤖 Auto\\-trading *ON* \\(demo\\)\\. Bot will place trades itself\\.');
+  } else if (cmd === '/auto off') {
+    autoTrade = false;
+    await sendTelegram('✋ Auto\\-trading *OFF*\\. Back to manual signals\\.');
   } else if (cmd === '/balance') {
     try {
       const r = await bridgeCall({ cmd: 'BALANCE' });
@@ -185,6 +221,8 @@ const COOLDOWN_MS = 15 * 60 * 1000; // same symbol: no repeat within 15 min
 async function dispatchSignal() {
   if (!isRunning) return;
 
+  await checkPendingTrades();
+
   const session = getSession();
   if (process.env.SKIP_LOW_SESSION === 'true' && session.quality === 0) return;
 
@@ -209,6 +247,44 @@ async function dispatchSignal() {
   const emoji = analysis.action === 'BUY' ? '🟢📈' : '🔴📉';
   const direction = analysis.action === 'BUY' ? 'Rise' : 'Fall';
   const price = analysis.price.toFixed(pair.decimals);
+
+  // ── Auto trade (demo) ─────────────────────────────────────────────────────
+  if (autoTrade) {
+    // Don't open a second trade on the same symbol while one is running
+    if (pendingTrades.some(t => t.display === pair.display)) return;
+    // Cap how many trades can run at once
+    if (pendingTrades.length >= 3) return;
+
+    const r = await bridgeCall({ cmd: 'BUY', symbol: pair.symbol, action: analysis.action, stake });
+    if (!r.ok || !r.trade?.contract_id) {
+      await sendTelegram('⚠️ Auto\\-trade blocked: ' + md(r.error ?? 'unknown error'));
+      return;
+    }
+    signalCount++;
+    lastSignalAt[pair.symbol] = Date.now();
+    pendingTrades.push({
+      contractId: r.trade.contract_id,
+      display: pair.display,
+      action: analysis.action,
+      placedAt: Date.now(),
+    });
+    await sendTelegram(
+      emoji + ' *TRADE PLACED — ' + md(pair.display) + '*\n\n' +
+      direction + ' · 15 min · stake \\$' + md(stake) + '\n' +
+      'Price: ' + md(price) + ' · Confidence: ' + md(analysis.confidence) + '%\n' +
+      'Why: ' + md(analysis.reason) + '\n' +
+      'Contract: ' + md(r.trade.contract_id) + '\n' +
+      (r.trade.balance_after !== undefined ? 'Balance: ' + md(r.trade.balance_after) + '\n' : '') +
+      '\n🤖 Auto\\-trading \\(demo\\) · ⏰ ' + md(time)
+    );
+    recentSignals.unshift({
+      id: String(Date.now()), symbol: pair.display, action: analysis.action,
+      confidence: analysis.confidence, rsi: analysis.rsi, time: time.slice(0, 5),
+      type: pair.type, priceSource: 'live',
+    });
+    if (recentSignals.length > 20) recentSignals.pop();
+    return;
+  }
 
   const message = [
     emoji + ' *' + md(analysis.action) + ' — ' + md(pair.display) + '*',
